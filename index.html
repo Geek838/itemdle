@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ITEMDLE — Guess the Build</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><polygon points='32,3 59,18 59,46 32,61 5,46 5,18' fill='%230b1224' stroke='%23c8aa6e' stroke-width='4'/><text x='32' y='42' font-size='28' text-anchor='middle' fill='%23c8aa6e'>i</text></svg>">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/sora/400.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/sora/600.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/sora/700.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/sora/800.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/inter/400.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/inter/500.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@fontsource/inter/700.css" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<canvas id="fx"></canvas>
+<div id="toast"></div>
+
+<div id="loader">
+  <div class="lb">ITEMDLE</div>
+  <div class="spin"></div>
+  <p id="loadMsg">Fetching latest patch data…</p>
+</div>
+
+<header>
+  <div class="hwrap">
+    <div class="logo">
+      <svg viewBox="0 0 64 64"><polygon points="32,3 59,18 59,46 32,61 5,46 5,18" fill="#0b1224" stroke="#c8aa6e" stroke-width="3.5"/><path d="M22 42 L38 26 M38 26 l6-2 -2 6 M20 44 l4 4" stroke="#c8aa6e" stroke-width="3.5" stroke-linecap="round" fill="none"/></svg>
+      <b>ITEMDLE</b>
+    </div>
+    <span class="patchBadge" id="patchBadge">patch …</span>
+    <div class="hspacer"></div>
+    <button class="iconBtn" id="btnHow" title="How to play">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="12" cy="12" r="9.2"/><path d="M9.4 9.3c.4-1.4 1.6-2.2 2.9-2.1 1.5.1 2.6 1.2 2.6 2.6 0 1.9-2.5 2.2-2.9 3.7"/><circle cx="12" cy="17.3" r=".4" fill="currentColor"/></svg>
+      How to play
+    </button>
+    <button class="iconBtn" id="btnStats" title="Statistics">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>
+      Stats
+    </button>
+  </div>
+</header>
+
+<div class="tabs">
+  <button class="tab active" id="tabDaily">⭐ Daily Challenge</button>
+  <button class="tab" id="tabFree">🎲 Unlimited</button>
+</div>
+<div class="modeStrip" id="modeStrip"></div>
+
+<main class="wrap"><div id="gameArea"></div></main>
+
+<footer>
+  ITEMDLE is a fan-made guessing game — not affiliated with or endorsed by Riot Games.<br>
+  Champion &amp; item images © Riot Games (Data Dragon, auto-synced to the latest patch · offline cache as fallback). Core build stats curated from community sources in the style of <a href="https://lolalytics.com" target="_blank" rel="noopener">LoLalytics</a>. League of Legends and all related assets are trademarks of Riot Games, Inc.
+</footer>
+
+<!-- overlays -->
+<div class="overlay" id="ovResult"><div class="oCard oCardWrap" id="ovResultCard"></div></div>
+
+<div class="overlay" id="ovHow">
+  <div class="oCard modal">
+    <button class="xClose" data-act="close-how">✕</button>
+    <h2>How to play</h2>
+    <p>A champion is shown. Guess the <b style="color:var(--gold2)">6 items of their most commonly built item set</b> — the community core build.</p>
+    <div style="margin:14px 0">
+      <div class="leg"><span class="pill core">CORE ITEM</span><span style="color:var(--mut);font-size:13.5px">This item is part of the champion's top-6 build.</span></div>
+      <div class="leg"><span class="pill sit">SITUATIONAL</span><span style="color:var(--mut);font-size:13.5px">Hot pick, but just outside the core 6 — close!</span></div>
+      <div class="leg"><span class="pill miss">NOT BUILT</span><span style="color:var(--mut);font-size:13.5px">Rarely built on this champion.</span></div>
+    </div>
+    <p>Find all 6 items to unlock the <b style="color:var(--gold2)">🏆 Bonus Round</b>: arrange the found items in the exact order they are most commonly purchased — from <b>1st item</b> to <b>6th item</b>. Green slot = right position. Unlimited attempts, but fewer is better!</p>
+    <ul style="margin-top:12px">
+      <li>⭐ <b>Daily</b> — one champion per day, same for everyone. Share your result!</li>
+      <li>🎲 <b>Unlimited</b> — endless random champions.</li>
+      <li>Builds follow the latest patch data (item list auto-synced via Data Dragon, with an offline cache fallback).</li>
+    </ul>
+    <div class="oBtns"><button class="btn" data-act="close-how">Got it!</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="ovStats"><div class="oCard modal" id="ovStatsCard"></div></div>
+
+<div class="overlay" id="ovConfirm">
+  <div class="oCard">
+    <div class="emj">🤔</div>
+    <h2 id="cfTitle">Are you sure?</h2>
+    <p class="sub" id="cfMsg"></p>
+    <div class="oBtns">
+      <button class="btn ghost" data-act="cf-no">Cancel</button>
+      <button class="btn danger" data-act="cf-yes">Yes</button>
+    </div>
+  </div>
+</div>
+
+<!-- scripts (order matters: data/utils first, app last) -->
+<script src="js/data.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/api.js"></script>
+<script src="js/game.js"></script>
+<script src="js/render.js"></script>
+<script src="js/confetti.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
