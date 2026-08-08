@@ -82,6 +82,19 @@ function normalizeItemName(name) {
   return norm(name);
 }
 
+// Starting items and consumables to exclude from builds
+const EXCLUDED_ITEMS = [
+  'doran', 'health potion', 'mana potion', 'biscuit', 'elixir',
+  'refillable potion', 'corrupting potion', 'rejuvenation bead',
+  'faerie charm', 'ruby crystal', 'sapphire crystal', 'long sword',
+  'cloth armor', 'null magic mantle', 'boots', 'boot'
+];
+
+function isExcludedItem(name) {
+  const normalized = norm(name);
+  return EXCLUDED_ITEMS.some(excluded => normalized.includes(excluded));
+}
+
 function extractItemName(str) {
   if (!str) return '';
   let name = str
@@ -126,12 +139,14 @@ async function scrapeLolalytics(championName, role = 'middle') {
   const itemImages = $('img[src*="item"]').toArray();
   const itemNames = itemImages.map(img => extractItemName(img.attribs.alt || img.attribs.src)).filter(Boolean);
   
-  // Remove duplicates while preserving order
+  // Remove duplicates and excluded items while preserving order
   const uniqueItems = [];
   const seen = new Set();
   for (const item of itemNames) {
     const itemNorm = normalizeItemName(item);
-    if (!seen.has(itemNorm) && itemNorm) {
+    // Skip excluded items (starting items, consumables, etc.)
+    if (isExcludedItem(item) || !itemNorm) continue;
+    if (!seen.has(itemNorm)) {
       seen.add(itemNorm);
       uniqueItems.push(item);
     }
@@ -159,24 +174,30 @@ async function scrapeOpgg(championName, role = 'mid') {
   
   let buildData = null;
   
+  // Helper to filter and deduplicate items
+  function getUniqueItems(imgArray) {
+    const itemNames = imgArray.map(img => extractItemName(img.attribs.alt || img.attribs.src)).filter(Boolean);
+    const uniqueItems = [];
+    const seen = new Set();
+    for (const item of itemNames) {
+      const itemNorm = normalizeItemName(item);
+      // Skip excluded items (starting items, consumables, etc.)
+      if (isExcludedItem(item) || !itemNorm) continue;
+      if (!seen.has(itemNorm)) {
+        seen.add(itemNorm);
+        uniqueItems.push(item);
+      }
+    }
+    return uniqueItems;
+  }
+  
   // Try to find item images in tables
   const tables = $('table');
   for (const table of tables.toArray()) {
     const text = $(table).text().toLowerCase();
     if (text.includes('core build') || text.includes('items')) {
       const items = $(table).find('img[src*="item"]').toArray();
-      const itemNames = items.map(img => extractItemName(img.attribs.alt || img.attribs.src)).filter(Boolean);
-      
-      // Remove duplicates
-      const uniqueItems = [];
-      const seen = new Set();
-      for (const item of itemNames) {
-        const itemNorm = normalizeItemName(item);
-        if (!seen.has(itemNorm) && itemNorm) {
-          seen.add(itemNorm);
-          uniqueItems.push(item);
-        }
-      }
+      const uniqueItems = getUniqueItems(items);
       
       if (uniqueItems.length >= 6) {
         buildData = {
@@ -191,17 +212,7 @@ async function scrapeOpgg(championName, role = 'mid') {
   // Fallback: all item images on page
   if (!buildData) {
     const allItems = $('img[src*="item"]').toArray();
-    const itemNames = allItems.map(img => extractItemName(img.attribs.alt || img.attribs.src)).filter(Boolean);
-    
-    const uniqueItems = [];
-    const seen = new Set();
-    for (const item of itemNames) {
-      const itemNorm = normalizeItemName(item);
-      if (!seen.has(itemNorm) && itemNorm) {
-        seen.add(itemNorm);
-        uniqueItems.push(item);
-      }
-    }
+    const uniqueItems = getUniqueItems(allItems);
     
     if (uniqueItems.length >= 6) {
       buildData = {
