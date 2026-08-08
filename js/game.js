@@ -30,18 +30,13 @@ async function initDaily() {
   if (!POOL.length) return;
   
   const saved = store.get("itemdle.daily." + todayKey());
-  const poolIndex = hashStr(todayKey()) % POOL.length;
+  const poolIndex = dailyNum() % POOL.length;
   const hardcodedChamp = POOL[poolIndex];
   
-  // Try to fetch dynamic build for this champion (fresh, not cached)
+  // Try to fetch dynamic build for this champion
   let champ = hardcodedChamp;
   if (typeof window !== 'undefined' && window.fetchChampionBuild) {
     try {
-      // Clear cache for this champion to ensure fresh data
-      if (typeof window.clearBuildCache !== 'undefined') {
-        // Clear all cache or just for this champ - for now clear all
-        window.clearBuildCache();
-      }
       const dynamicBuild = await window.fetchChampionBuild(hardcodedChamp.name);
       if (dynamicBuild && dynamicBuild.builds && dynamicBuild.builds[0]) {
         // Found dynamic build - use it
