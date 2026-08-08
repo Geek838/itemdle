@@ -33,11 +33,16 @@ async function initDaily() {
   const poolIndex = hashStr(todayKey()) % POOL.length;
   const hardcodedChamp = POOL[poolIndex];
   
-  // Try to fetch dynamic build for this champion
+  // Try to fetch dynamic build for this champion (fresh, not cached)
   let champ = hardcodedChamp;
-  if (typeof window !== 'undefined' && window.getChampionBuild) {
+  if (typeof window !== 'undefined' && window.fetchChampionBuild) {
     try {
-      const dynamicBuild = await window.getChampionBuild(hardcodedChamp.name);
+      // Clear cache for this champion to ensure fresh data
+      if (typeof window.clearBuildCache !== 'undefined') {
+        // Clear all cache or just for this champ - for now clear all
+        window.clearBuildCache();
+      }
+      const dynamicBuild = await window.fetchChampionBuild(hardcodedChamp.name);
       if (dynamicBuild && dynamicBuild.builds && dynamicBuild.builds[0]) {
         // Found dynamic build - use it
         const b = dynamicBuild.builds[0];
@@ -59,10 +64,12 @@ async function initDaily() {
             source: 'dynamic'
           };
           console.log(`[game] Using dynamic build for daily champion: ${champ.name}`);
+        } else {
+          console.warn(`[game] Dynamic build for ${hardcodedChamp.name} has only ${core.length} core items, using hardcoded`);
         }
       }
     } catch (e) {
-      console.warn(`[game] Failed to fetch dynamic build for daily, using hardcoded`);
+      console.warn(`[game] Failed to fetch dynamic build for daily, using hardcoded:`, e);
     }
   }
   
@@ -96,11 +103,11 @@ async function newFree() {
   do { pick = POOL[Math.floor(Math.random() * POOL.length)]; }
   while (POOL.length > 1 && pick && lastFreeId === pick.key);
   
-  // Try to fetch dynamic build for this champion
+  // Try to fetch dynamic build for this champion (fresh, not cached)
   let champ = pick;
-  if (typeof window !== 'undefined' && window.getChampionBuild && pick) {
+  if (typeof window !== 'undefined' && window.fetchChampionBuild && pick) {
     try {
-      const dynamicBuild = await window.getChampionBuild(pick.name);
+      const dynamicBuild = await window.fetchChampionBuild(pick.name);
       if (dynamicBuild && dynamicBuild.builds && dynamicBuild.builds[0]) {
         // Found dynamic build - use it
         const b = dynamicBuild.builds[0];
@@ -122,10 +129,12 @@ async function newFree() {
             source: 'dynamic'
           };
           console.log(`[game] Using dynamic build for free mode: ${champ.name}`);
+        } else {
+          console.warn(`[game] Dynamic build for ${pick.name} has only ${core.length} core items, using hardcoded`);
         }
       }
     } catch (e) {
-      console.warn(`[game] Failed to fetch dynamic build for free mode, using hardcoded`);
+      console.warn(`[game] Failed to fetch dynamic build for free mode, using hardcoded:`, e);
     }
   }
   
