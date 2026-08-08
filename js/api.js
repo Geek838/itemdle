@@ -10,6 +10,52 @@ function buildPool() {
   }
 }
 
+/**
+ * Resolve champion with dynamic build fetching
+ * Tries to fetch from online sources first, then falls back to hardcoded
+ * @param {Object} entry - Build entry from BUILDS array
+ * @returns {Object|null} Resolved champion with builds
+ */
+async function resolveChampionWithDynamic(entry) {
+  // First try to fetch dynamic build
+  if (typeof window !== 'undefined' && window.getChampionBuild) {
+    try {
+      const dynamicBuild = await window.getChampionBuild(entry.ch);
+      if (dynamicBuild) {
+        // Dynamic build found, use it
+        console.log(`[api] Using dynamic build for ${entry.ch}`);
+        const cm = CHAMP[norm(entry.ch)];
+        if (!cm) return null;
+        
+        // Extract builds from dynamic data
+        for (const b of dynamicBuild.builds) {
+          const core = b.core.map(findItem);
+          if (core.every(Boolean) && new Set(core.map(i => String(i.id))).size === 6) {
+            const ids = new Set(core.map(i => String(i.id)));
+            const sit = (b.sit || []).map(findItem).filter(Boolean).filter(i => !ids.has(String(i.id)));
+            return {
+              name: dynamicBuild.ch,
+              key: cm.key,
+              num: cm.num,
+              role: dynamicBuild.role || entry.role,
+              core,
+              sit,
+              coreSet: ids,
+              sitSet: new Set(sit.map(i => String(i.id))),
+              source: 'dynamic'
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[api] Dynamic build fetch failed for ${entry.ch}, falling back to hardcoded`);
+    }
+  }
+  
+  // Fall back to hardcoded
+  return resolveChampion(entry);
+}
+
 function isCanonicalId(id) {
   const s = String(id);
   return /^\d{3,4}$/.test(s) && !s.startsWith("9");
@@ -104,10 +150,75 @@ async function loadRiotData() {
       CHAMP[norm(d.name)] = { key: String(d.id), num: d.key };
     }
     SRC = "live";
-    buildPool();
+    
+    // Build pool with dynamic builds
+    await buildPoolDynamic();
     liveOK = POOL.length > 0 && ITEMS.length > 40;
   } catch (e) {
     liveOK = false;
   }
   if (!liveOK) useOffline();
+}
+
+/**
+ * Build pool using dynamic build fetching
+ * Falls back to hardcoded builds for champions without dynamic data
+ */
+async function buildPoolDynamic() {
+  POOL = [];
+  
+  // For each hardcoded entry, try to fetch dynamic build
+  for (const entry of BUILDS) {
+    const resolved = await resolveChampionWithDynamic(entry);
+    if (resolved) {
+      POOL.push(resolved);
+    } else {
+      // Fall back to hardcoded
+      const r = resolveChampion(entry);
+      if (r) POOL.push(r);
+    }
+  }
+  
+  // Also try to add champions that have dynamic builds but no hardcoded entry
+  // Get all champion names from CHAMP
+  for (const [champName, champData] of Object.entries(CHAMP)) {
+    // Check if we already have this champion from hardcoded builds
+    const alreadyInPool = POOL.some(p => norm(p.name) === champName);
+    if (alreadyInPool) continue;
+    
+    // Try to fetch dynamic build for this champion
+    try {
+      const dynamicBuild = typeof window !== 'undefined' && window.getChampionBuild 
+        ? await window.getChampionBuild(champData.key || champName) 
+        : null;
+      
+      if (dynamicBuild) {
+        // Resolve the dynamic build with our item/champion data
+        for (const b of dynamicBuild.builds) {
+          const core = b.core.map(findItem);
+          if (core.every(Boolean) && new Set(core.map(i => String(i.id))).size === 6) {
+            const ids = new Set(core.map(i => String(i.id)));
+            const sit = (b.sit || []).map(findItem).filter(Boolean).filter(i => !ids.has(String(i.id)));
+            POOL.push({
+              name: dynamicBuild.ch,
+              key: champData.key,
+              num: champData.num,
+              role: dynamicBuild.role || 'Mid',
+              core,
+              sit,
+              coreSet: ids,
+              sitSet: new Set(sit.map(i => String(i.id))),
+              source: 'dynamic'
+            });
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      // Skip if dynamic fetch fails for this champion
+      console.warn(`[api] Skipping ${champName} due to dynamic fetch error`);
+    }
+  }
+  
+  console.log(`[api] Built pool with ${POOL.length} champions`);
 }
