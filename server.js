@@ -1,7 +1,7 @@
 /**
  * server.js - Backend proxy for ITEMDLE dynamic build fetching
  * 
- * Fetches builds from mobalytics.gg and serves them via a simple API.
+ * Fetches builds from mobalytics.gg (primary) with fallback to lolalytics.com
  * 
  * USAGE:
  * 1. Install Node.js (v16+)
@@ -10,7 +10,7 @@
  * 4. The server runs on http://localhost:3000
  * 
  * ENDPOINTS:
- * - GET /api/build/:champion - Get build for champion from mobalytics.gg
+ * - GET /api/build/:champion - Get build for champion (mobalytics.gg primary, lolalytics fallback)
  * 
  * DEPLOYMENT:
  * - Deploy to Heroku, Render, Railway, or any Node.js hosting
@@ -97,7 +97,7 @@ function extractItemName(str) {
   return name;
 }
 
-// Map mobalytics role names to our standard role names
+// Map role names to our standard role names
 const ROLE_MAP = {
   'mid': 'Mid',
   'middle': 'Mid',
@@ -124,8 +124,8 @@ const DEFAULT_ROLES = {
   'amumu': 'Jungle', 'thresh': 'Support', 'lulu': 'Support'
 };
 
-// Fetch HTML through axios with retry logic for Cloudflare
-async function fetchHtml(url) {
+// Fetch HTML through axios with Cloudflare handling
+async function fetchHtml(url, retries = 3) {
   const userAgents = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -137,42 +137,37 @@ async function fetchHtml(url) {
       'User-Agent': userAgents[0],
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
       'Accept-Language': 'en-US,en;q=0.9',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Connection': 'keep-alive',
-      'Referer': 'https://mobalytics.gg/',
-      'DNT': '1'
+      'Accept-Encoding': 'gzip, deflate, br'
     },
     {
       'User-Agent': userAgents[1],
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-us',
-      'Accept-Encoding': 'gzip, deflate',
-      'Connection': 'keep-alive'
+      'Accept-Language': 'en-us'
     },
     {
       'User-Agent': userAgents[2],
-      'Accept': '*/*',
-      'Accept-Encoding': 'gzip, deflate, br'
+      'Accept': '*/*'
     }
   ];
 
-  for (let i = 0; i < headersList.length; i++) {
+  for (let i = 0; i < retries && i < headersList.length; i++) {
     try {
       const response = await axios.get(url, {
-        headers: headersList[i],
+        headers: headersList[i % headersList.length],
         timeout: 15000
       });
       
       // Check if we got a Cloudflare challenge page
-      if (response.data.includes('Just a moment...') || response.data.includes('Cloudflare')) {
-        console.log(`[server] Cloudflare challenge detected, retrying with different headers (${i + 1}/${headersList.length})`);
+      if (response.data.includes('Just a moment...') || response.data.includes('Cloudflare') || 
+          response.data.includes('cf-ray') || response.data.includes('cf-chl')) {
+        console.log(`[server] Cloudflare challenge detected, retrying (${i + 1}/${retries})`);
         continue;
       }
       
       return response.data;
     } catch (error) {
-      if (error.response && error.response.status === 403) {
-        console.log(`[server] 403 Forbidden, retrying with different headers (${i + 1}/${headersList.length})`);
+      if (error.response && (error.response.status === 403 || error.response.status === 103)) {
+        console.log(`[server] ${error.response.status} Forbidden, retrying (${i + 1}/${retries})`);
         continue;
       }
       throw error;
@@ -182,70 +177,46 @@ async function fetchHtml(url) {
   throw new Error('All fetch attempts failed - likely blocked by Cloudflare');
 }
 
-// Scrape mobalytics.gg
-async function scrapeMobalytics(championName) {
-  const normalizedName = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const url = `https://mobalytics.gg/lol/champions/${normalizedName}/build`;
-  
-  console.log(`[server] Scraping mobalytics.gg for ${championName}: ${url}`);
-  
-  const html = await fetchHtml(url);
-  const $ = cheerio.load(html);
-  
-  // Try to find the role from the page
-  let role = DEFAULT_ROLES[normalizedName] || 'Mid';
-  
-  // Try to find role in page content
-  const roleSelectors = [
-    '.champion-role',
-    '.role-badge',
-    '[class*="role"]',
-    '.role',
-    'h1',
-    'h2',
-    '.title',
-    '.champion-title'
-  ];
-  
-  for (const selector of roleSelectors) {
-    const roleElement = $(selector).first();
-    if (roleElement.length) {
-      const roleText = roleElement.text().toLowerCase();
-      for (const [key, value] of Object.entries(ROLE_MAP)) {
-        if (roleText.includes(key)) {
-          role = value;
-          break;
+// Extract build from parsed HTML - shared logic for both sources
+function extractBuildFromHTML($, championName, sourceName) {
+  // Start with default role if we have one for this champion
+  const normalizedKey = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  let role = DEFAULT_ROLES[normalizedKey] || 'Mid';
+
+  if (sourceName === 'lolalytics' && !DEFAULT_ROLES[normalizedKey]) {
+    // Only detect role from page if we don't have a default for this champion
+    // LoLalytics role detection - use most popular role
+    const laneElements = $('[href*="/build/?lane="]');
+    if (laneElements.length > 0) {
+      const lanes = [];
+      for (const el of laneElements.toArray()) {
+        const href = $(el).attr('href');
+        const match = href?.match(/lane=(\w+)/);
+        if (match) {
+          const lane = match[1];
+          const text = $(el).text();
+          const percentMatch = text.match(/(\d+\.?\d*)%/);
+          const percent = percentMatch ? parseFloat(percentMatch[1]) : 0;
+          lanes.push({ lane, percent });
         }
       }
-      // Also check if the role is directly in the text
-      if (roleText.includes('mid') || roleText.includes('middle')) role = 'Mid';
-      else if (roleText.includes('top')) role = 'Top';
-      else if (roleText.includes('jungle') || roleText.includes('jng')) role = 'Jungle';
-      else if (roleText.includes('adc') || roleText.includes('ad carry') || roleText.includes('bot') || roleText.includes('bottom')) role = 'ADC';
-      else if (roleText.includes('support') || roleText.includes('sup')) role = 'Support';
+      
+      lanes.sort((a, b) => b.percent - a.percent);
+      
+      if (lanes[0]) {
+        const laneMap = {
+          'middle': 'Mid', 'top': 'Top', 'jungle': 'Jungle',
+          'bottom': 'ADC', 'support': 'Support'
+        };
+        role = laneMap[lanes[0].lane] || lanes[0].lane;
+      }
     }
   }
-  
-  // Try to find role in page title
-  const title = $('title').text().toLowerCase();
-  for (const [key, value] of Object.entries(ROLE_MAP)) {
-    if (title.includes(key)) {
-      role = value;
-      break;
-    }
-  }
-  
-  // Use default role if we have one for this champion (to override any wrong detection from page)
-  if (DEFAULT_ROLES[normalizedName]) {
-    role = DEFAULT_ROLES[normalizedName];
-  }
-  
-  console.log(`[server] Detected role for ${championName}: ${role}`);
-  
+
   let coreItems = [];
   let sitItems = [];
-  
-  // Strategy 1: Look for specific section headers and their content
+
+  // Try to find item sections
   const sections = $('h2, h3, h4, .section-title, .section-header, [class*="title"], [class*="heading"]');
   
   for (const section of sections.toArray()) {
@@ -257,31 +228,26 @@ async function scrapeMobalytics(championName) {
         sectionText.includes('best build') || sectionText.includes('full item build') ||
         sectionText.includes('recommended items') || sectionText.includes('best items')) {
       
-      // Find the next sibling elements that contain items
-      const sectionParent = $(section).parent();
-      const nextContainer = $(section).next();
+      // Find all item images after this section
+      let allItemImages = [];
       
-      // Look for item containers in various possible locations
+      // Check various possible locations
       const possibleContainers = [
-        sectionParent.find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]'),
-        nextContainer.find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]'),
         $(section).nextAll('img[src*="item"], img[src*="ddragon"], img[alt*="item"]'),
-        sectionParent.next().find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]')
+        $(section).parent().find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]'),
+        $(section).next().find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]'),
+        $(section).nextAll('div').slice(0, 5).find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]')
       ];
       
-      // Collect all item images from possible containers
-      let allItemImages = [];
       for (const container of possibleContainers) {
         allItemImages = allItemImages.concat(container.toArray());
       }
       
-      // Also look for item containers in div elements near the section
-      const nearbyDivs = $(section).nextAll('div').slice(0, 5);
+      // Also check parent's next elements
+      const nearbyDivs = $(section).nextAll('div').slice(0, 3);
       for (const div of nearbyDivs.toArray()) {
         const divItems = $(div).find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]').toArray();
-        if (divItems.length > 0) {
-          allItemImages = allItemImages.concat(divItems);
-        }
+        allItemImages = allItemImages.concat(divItems);
       }
       
       // Extract and filter item names
@@ -304,12 +270,11 @@ async function scrapeMobalytics(championName) {
       
       if (uniqueCoreItems.length >= 6) {
         coreItems = uniqueCoreItems.slice(0, 6);
-        console.log(`[server] Found ${coreItems.length} core items from section: ${sectionText}`);
-      } else if (uniqueCoreItems.length > 0) {
-        console.log(`[server] Found ${uniqueCoreItems.length} core items (need 6) from section: ${sectionText}`);
+      } else if (uniqueCoreItems.length > 0 && coreItems.length < uniqueCoreItems.length) {
+        coreItems = uniqueCoreItems;
       }
       
-      // Now look for Situational Items section after this one
+      // Look for Situational Items section after this one
       const allSectionsAfter = $(section).nextAll('h2, h3, h4, .section-title, .section-header');
       for (const sitSection of allSectionsAfter.toArray()) {
         const sitText = $(sitSection).text().toLowerCase().trim();
@@ -317,12 +282,9 @@ async function scrapeMobalytics(championName) {
             sitText.includes('optional items') || sitText.includes('item options') ||
             sitText.includes('situational items') || sitText.includes('optional')) {
           
-          const sitContainer = $(sitSection).parent();
-          const sitNext = $(sitSection).next();
-          
           const sitItemImages = [
-            sitContainer.find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]'),
-            sitNext.find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]'),
+            $(sitSection).parent().find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]'),
+            $(sitSection).next().find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]'),
             $(sitSection).nextAll('img[src*="item"], img[src*="ddragon"], img[alt*="item"]')
           ];
           
@@ -331,13 +293,11 @@ async function scrapeMobalytics(championName) {
             allSitImages = allSitImages.concat(container.toArray());
           }
           
-          // Also check nearby divs for situational items
+          // Also check nearby divs
           const nearbySitDivs = $(sitSection).nextAll('div').slice(0, 5);
           for (const div of nearbySitDivs.toArray()) {
             const divItems = $(div).find('img[src*="item"], img[src*="ddragon"], img[alt*="item"]').toArray();
-            if (divItems.length > 0) {
-              allSitImages = allSitImages.concat(divItems);
-            }
+            allSitImages = allSitImages.concat(divItems);
           }
           
           const sitItemNames = allSitImages.map(img => {
@@ -350,7 +310,6 @@ async function scrapeMobalytics(championName) {
           for (const item of sitItemNames) {
             const itemNorm = norm(item);
             if (isExcludedItem(item) || !itemNorm) continue;
-            // Don't include items already in core
             if (!seenCore.has(itemNorm) && !seenSit.has(itemNorm)) {
               seenSit.add(itemNorm);
               uniqueSitItems.push(item);
@@ -360,7 +319,6 @@ async function scrapeMobalytics(championName) {
           
           if (uniqueSitItems.length > 0) {
             sitItems = uniqueSitItems.slice(0, 14);
-            console.log(`[server] Found ${sitItems.length} situational items from section: ${sitText}`);
           }
           break;
         }
@@ -372,12 +330,9 @@ async function scrapeMobalytics(championName) {
       }
     }
   }
-  
-  // Strategy 2: If we don't have enough core items, try looking for specific class patterns
+
+  // Strategy 2: Look for item containers with specific classes
   if (coreItems.length < 6) {
-    console.log(`[server] Strategy 1 found only ${coreItems.length} core items, trying Strategy 2`);
-    
-    // Look for containers with item images that might contain the build
     const buildContainers = $('[class*="build"], [class*="items"], .build-container, .items-container, .item-list, .item-build');
     
     for (const container of buildContainers.toArray()) {
@@ -386,7 +341,6 @@ async function scrapeMobalytics(championName) {
       
       if (itemImages.length < 6) continue;
       
-      // Check if this container contains core/full build related text
       if (containerText.includes('full') || containerText.includes('core') || 
           containerText.includes('recommended') || containerText.includes('best') ||
           containerText.includes('build') || containerText.includes('items')) {
@@ -409,12 +363,11 @@ async function scrapeMobalytics(championName) {
         
         if (uniqueItems.length >= 6) {
           coreItems = uniqueItems.slice(0, 6);
-          console.log(`[server] Strategy 2: Found ${coreItems.length} core items from container`);
           
           // Also try to find situational items in other containers
           const sitContainers = buildContainers.not(container).filter(function() {
             const text = $(this).text().toLowerCase();
-            return text.includes('situational') || text.includes('alternative') || text.includes('optional') || text.includes('situational items');
+            return text.includes('situational') || text.includes('alternative') || text.includes('optional');
           });
           
           for (const sitContainer of sitContainers.toArray()) {
@@ -438,7 +391,6 @@ async function scrapeMobalytics(championName) {
             
             if (uniqueSitItems.length > 0) {
               sitItems = uniqueSitItems.slice(0, 14);
-              console.log(`[server] Strategy 2: Found ${sitItems.length} situational items`);
               break;
             }
           }
@@ -447,11 +399,9 @@ async function scrapeMobalytics(championName) {
       }
     }
   }
-  
+
   // Strategy 3: Fallback - use all item images on the page
   if (coreItems.length < 6) {
-    console.log(`[server] Strategies 1-2 failed, trying Strategy 3 (fallback)`);
-    
     const allItemImages = $('img[src*="item"], img[src*="ddragon"], img[alt*="item"]').toArray();
     const itemNames = allItemImages.map(img => {
       const alt = img.attribs?.alt || img.attribs?.src || '';
@@ -472,23 +422,82 @@ async function scrapeMobalytics(championName) {
     if (uniqueItems.length >= 6) {
       coreItems = uniqueItems.slice(0, 6);
       sitItems = uniqueItems.slice(6, 14);
-      console.log(`[server] Strategy 3: Found ${coreItems.length} core items and ${sitItems.length} situational items`);
     } else {
-      console.log(`[server] Strategy 3: Only found ${uniqueItems.length} items total`);
+      coreItems = uniqueItems;
     }
   }
-  
-  // Ensure we have at least 6 core items
-  if (coreItems.length < 6) {
-    console.error(`[server] Failed to find 6 core items for ${championName}. Found ${coreItems.length}: ${JSON.stringify(coreItems)}`);
-    throw new Error(`No build data found on mobalytics.gg for ${championName}`);
-  }
-  
-  console.log(`[server] Final result for ${championName}: ${coreItems.length} core, ${sitItems.length} situational, role: ${role}`);
+
   return { core: coreItems.slice(0, 6), sit: sitItems.slice(0, 14), role };
 }
 
-// Main endpoint: Get build from mobalytics.gg
+// Scrape mobalytics.gg (primary source)
+async function scrapeMobalytics(championName) {
+  const normalizedName = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const url = `https://mobalytics.gg/lol/champions/${normalizedName}/build`;
+  
+  console.log(`[server] Scraping mobalytics.gg for ${championName}: ${url}`);
+  
+  const html = await fetchHtml(url);
+  const $ = cheerio.load(html);
+  
+  return extractBuildFromHTML($, championName, 'mobalytics');
+}
+
+// Scrape lolalytics.com (fallback source)
+async function scrapeLolalytics(championName) {
+  const normalizedName = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Try middle lane first as most common
+  const url = `https://lolalytics.com/lol/${normalizedName}/build/?lane=middle`;
+  
+  console.log(`[server] Scraping lolalytics.com for ${championName}: ${url}`);
+  
+  const html = await fetchHtml(url);
+  const $ = cheerio.load(html);
+  
+  return extractBuildFromHTML($, championName, 'lolalytics');
+}
+
+// Main scrape function - try mobalytics first, fallback to lolalytics
+async function scrapeBuild(championName) {
+  let build;
+  let source = 'mobalytics';
+  
+  // Try mobalytics first
+  try {
+    build = await scrapeMobalytics(championName);
+    console.log(`[server] Successfully scraped from mobalytics.gg for ${championName}`);
+    
+    // Ensure we have 6 core items
+    if (build.core && build.core.length >= 6) {
+      return { ...build, source };
+    }
+  } catch (e) {
+    console.warn(`[server] Mobalytics failed for ${championName}: ${e.message}`);
+  }
+  
+  // Fallback to lolalytics
+  try {
+    build = await scrapeLolalytics(championName);
+    source = 'lolalytics';
+    console.log(`[server] Successfully scraped from lolalytics.com for ${championName}`);
+    
+    // Ensure we have 6 core items
+    if (build.core && build.core.length >= 6) {
+      return { ...build, source };
+    }
+  } catch (e) {
+    console.warn(`[server] Lolalytics failed for ${championName}: ${e.message}`);
+  }
+  
+  // If we got some items but not 6, still return what we have
+  if (build && build.core && build.core.length > 0) {
+    return { ...build, source };
+  }
+  
+  throw new Error(`No build data found for ${championName} from any source`);
+}
+
+// Main endpoint: Get build
 app.get('/api/build/:champion', async (req, res) => {
   const ip = req.ip;
   if (!checkRateLimit(ip)) {
@@ -499,25 +508,32 @@ app.get('/api/build/:champion', async (req, res) => {
     const { champion } = req.params;
     const normalizedName = champion.trim();
     
-    // Scrape from mobalytics.gg
+    // Use default role if we have one
+    const normalizedKey = normalizedName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    let role = DEFAULT_ROLES[normalizedKey] || 'Mid';
+    
+    // Scrape build
     let build;
     try {
-      build = await scrapeMobalytics(normalizedName);
+      build = await scrapeBuild(normalizedName);
+      role = build.role || role; // Use detected role if available
     } catch (e) {
-      console.error(`[server] Mobalytics scraping failed for ${normalizedName}:`, e.message);
-      return res.status(500).json({ error: 'Failed to scrape mobalytics.gg - may be blocked by Cloudflare' });
+      console.error(`[server] All scraping failed for ${normalizedName}:`, e.message);
+      return res.status(500).json({ error: 'Failed to fetch build data from all sources' });
     }
     
     // Ensure we have exactly 6 core items
     if (!build.core || build.core.length < 6) {
-      return res.status(404).json({ error: 'Insufficient core items found' });
+      return res.status(404).json({ 
+        error: `Insufficient core items found (${build.core ? build.core.length : 0}) for ${normalizedName}` 
+      });
     }
     
     const result = {
       ch: normalizedName,
-      role: build.role || 'Mid',
+      role: role,
       builds: [{ core: build.core.slice(0, 6), sit: build.sit || [] }],
-      source: { primary: 'mobalytics', timestamp: Date.now() }
+      source: { primary: build.source, timestamp: Date.now() }
     };
     
     res.json(result);

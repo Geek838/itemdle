@@ -27,11 +27,12 @@ ITEMDLE now features a **dynamic build curation system** that fetches the latest
 
 | Source | Priority | URL | Status |
 |--------|----------|-----|--------|
-| Mobalytics | Primary | https://mobalytics.gg | ✅ Live scraping |
+| Mobalytics | Primary | https://mobalytics.gg | ⚠️ May be blocked by Cloudflare |
+| LoLalytics | Fallback | https://lolalytics.com | ✅ Live scraping |
 
 ### Build Merging Algorithm
 
-Builds are fetched from mobalytics.gg using the FULL BUILD section for core items (6 items) and Situational Items section for situational items.
+Builds are fetched from mobalytics.gg (primary) with fallback to lolalytics.com. Uses FULL BUILD section for core items (6 items) and Situational Items section for situational items.
 
 ### Caching
 
@@ -48,6 +49,8 @@ User requests build for Ahri
 Check localStorage cache (if <24h old)
     ↓
 Fetch from Mobalytics.gg
+    ↓
+If blocked by Cloudflare, fallback to LoLalytics
     ↓
 Use FULL BUILD section for core, Situational Items for sit
     ↓
@@ -328,7 +331,7 @@ Or include the test script:
 
 - **Fallback to hardcoded**: Game always works, even if scraping fails
 - **24h client-side cache**: Minimizes repeated backend requests
-- **Single source**: Backend uses mobalytics.gg only
+- **Dual source with fallback**: Backend tries mobalytics.gg first, falls back to lolalytics.com if Cloudflare blocks requests
 - **Graceful degradation**: Worst case = hardcoded builds
 - **Easy deployment**: Backend can be deployed to any Node.js hosting service
 
