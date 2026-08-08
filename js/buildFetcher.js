@@ -5,10 +5,7 @@
 // ============================================
 
 // norm is defined in utils.js which is loaded before this file
-// If for some reason it's not available, define a fallback
-var norm = typeof norm === 'undefined' 
-  ? (s => String(s).toLowerCase().replace(/[^a-z0-9]/g, "")) 
-  : norm;
+// This file assumes norm() is available globally
 
 // ============================================
 // CONFIGURATION
@@ -493,21 +490,21 @@ function mergeBuilds(primaryBuild, secondaryBuild) {
   }
   
   // Normalize all item names for comparison
-  const norm = (name) => normalizeItemName(name);
+  const localNorm = (name) => normalizeItemName(name);
   
   // Step 1: Use Primary's core as the base
   let finalCore = [...primaryBuild.core];
   let finalSit = [...primaryBuild.sit || []];
   
   // Create sets for fast lookup
-  const primaryCoreSet = new Set(primaryBuild.core.map(norm));
-  const primarySitSet = new Set((primaryBuild.sit || []).map(norm));
-  const secondaryCoreSet = new Set(secondaryBuild.core.map(norm));
-  const secondarySitSet = new Set((secondaryBuild.sit || []).map(norm));
+  const primaryCoreSet = new Set(primaryBuild.core.map(localNorm));
+  const primarySitSet = new Set((primaryBuild.sit || []).map(localNorm));
+  const secondaryCoreSet = new Set(secondaryBuild.core.map(localNorm));
+  const secondarySitSet = new Set((secondaryBuild.sit || []).map(localNorm));
   
   // Step 2: Check for disagreements
   for (const secItem of secondaryBuild.core) {
-    const secNorm = norm(secItem);
+    const secNorm = localNorm(secItem);
     
     // If secondary core item is not in primary core
     if (!primaryCoreSet.has(secNorm)) {
@@ -524,7 +521,7 @@ function mergeBuilds(primaryBuild, secondaryBuild) {
       if (!primaryCoreSet.has(secNorm) && !primarySitSet.has(secNorm)) {
         // Replace the last item in finalCore with this secondary core item
         // But only if it's not already in finalCore
-        if (!finalCore.map(norm).includes(secNorm)) {
+        if (!finalCore.map(localNorm).includes(secNorm)) {
           const lastIndex = finalCore.length - 1;
           if (lastIndex >= 0) {
             finalCore[lastIndex] = secItem;
@@ -536,12 +533,12 @@ function mergeBuilds(primaryBuild, secondaryBuild) {
   }
   
   // Step 3: Merge situational items (exclude core items)
-  const allFinalCoreNorm = new Set(finalCore.map(norm));
+  const allFinalCoreNorm = new Set(finalCore.map(localNorm));
   
   // Add secondary situational items that aren't in final core
   const secondarySitUnique = (secondaryBuild.sit || []).filter(item => {
-    const itemNorm = norm(item);
-    return !allFinalCoreNorm.has(itemNorm) && !finalSit.map(norm).includes(itemNorm);
+    const itemNorm = localNorm(item);
+    return !allFinalCoreNorm.has(itemNorm) && !finalSit.map(localNorm).includes(itemNorm);
   });
   
   finalSit = [...finalSit, ...secondarySitUnique];
@@ -552,7 +549,7 @@ function mergeBuilds(primaryBuild, secondaryBuild) {
   // Remove duplicates from situational
   const seenSit = new Set();
   finalSit = finalSit.filter(item => {
-    const itemNorm = norm(item);
+    const itemNorm = localNorm(item);
     if (seenSit.has(itemNorm)) return false;
     seenSit.add(itemNorm);
     return true;
