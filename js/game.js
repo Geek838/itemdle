@@ -26,10 +26,46 @@ function G_pushGuess(G, item, v) {
   }
 }
 
-function initDaily() {
+async function initDaily() {
   if (!POOL.length) return;
+  
   const saved = store.get("itemdle.daily." + todayKey());
-  const champ = POOL[hashStr(todayKey()) % POOL.length];
+  const poolIndex = hashStr(todayKey()) % POOL.length;
+  const hardcodedChamp = POOL[poolIndex];
+  
+  // Try to fetch dynamic build for this champion
+  let champ = hardcodedChamp;
+  if (typeof window !== 'undefined' && window.getChampionBuild) {
+    try {
+      const dynamicBuild = await window.getChampionBuild(hardcodedChamp.name);
+      if (dynamicBuild && dynamicBuild.builds && dynamicBuild.builds[0]) {
+        // Found dynamic build - use it
+        const b = dynamicBuild.builds[0];
+        const core = b.core.map(findItem).filter(Boolean);
+        const sit = (b.sit || []).map(findItem).filter(Boolean);
+        
+        if (core.length >= 6) {
+          const ids = new Set(core.map(i => String(i.id)));
+          const sitFiltered = sit.filter(i => !ids.has(String(i.id)));
+          champ = {
+            name: dynamicBuild.ch,
+            key: hardcodedChamp.key,
+            num: hardcodedChamp.num,
+            role: dynamicBuild.role || hardcodedChamp.role,
+            core,
+            sit: sitFiltered,
+            coreSet: ids,
+            sitSet: new Set(sitFiltered.map(i => String(i.id))),
+            source: 'dynamic'
+          };
+          console.log(`[game] Using dynamic build for daily champion: ${champ.name}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[game] Failed to fetch dynamic build for daily, using hardcoded`);
+    }
+  }
+  
   const G = newGame(champ, "daily");
   if (saved && saved.guesses) {
     saved.guesses.forEach(g => {
@@ -53,13 +89,48 @@ function saveDaily(G) {
   });
 }
 
-function newFree() {
+async function newFree() {
   if (!POOL.length) return;
+  
   let pick;
   do { pick = POOL[Math.floor(Math.random() * POOL.length)]; }
   while (POOL.length > 1 && pick && lastFreeId === pick.key);
-  lastFreeId = pick && pick.key;
-  freeG = newGame(pick, "free");
+  
+  // Try to fetch dynamic build for this champion
+  let champ = pick;
+  if (typeof window !== 'undefined' && window.getChampionBuild && pick) {
+    try {
+      const dynamicBuild = await window.getChampionBuild(pick.name);
+      if (dynamicBuild && dynamicBuild.builds && dynamicBuild.builds[0]) {
+        // Found dynamic build - use it
+        const b = dynamicBuild.builds[0];
+        const core = b.core.map(findItem).filter(Boolean);
+        const sit = (b.sit || []).map(findItem).filter(Boolean);
+        
+        if (core.length >= 6) {
+          const ids = new Set(core.map(i => String(i.id)));
+          const sitFiltered = sit.filter(i => !ids.has(String(i.id)));
+          champ = {
+            name: dynamicBuild.ch,
+            key: pick.key,
+            num: pick.num,
+            role: dynamicBuild.role || pick.role,
+            core,
+            sit: sitFiltered,
+            coreSet: ids,
+            sitSet: new Set(sitFiltered.map(i => String(i.id))),
+            source: 'dynamic'
+          };
+          console.log(`[game] Using dynamic build for free mode: ${champ.name}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[game] Failed to fetch dynamic build for free mode, using hardcoded`);
+    }
+  }
+  
+  lastFreeId = champ && champ.key;
+  freeG = newGame(champ, "free");
 }
 
 const currentG = () => activeMode === "daily" ? dailyG : freeG;
