@@ -8,31 +8,31 @@ ITEMDLE is a League of Legends guessing game where you identify the 6 core items
 - **Unlimited Mode**: Endless random champions
 - **Bonus Round**: Arrange found items in the correct purchase order
 - **Live Patch Data**: Auto-synced with the latest League of Legends patch via Data Dragon
-- **Dynamic Builds**: Builds are now fetched from mobalytics.gg on-demand
+- **Dynamic Builds**: Builds are fetched exclusively from mobalytics.gg on-demand using Playwright
 - **Offline Cache**: Fallback to cached builds (24h TTL) or offline patch data
 - **Statistics**: Track your wins, streak, and best scores
 - **Share Results**: Copy your results to share with friends
 
 ## Dynamic Build System
 
-ITEMDLE now features a **dynamic build curation system** that fetches the latest champion builds from mobalytics.gg. This replaces the previous hardcoded builds system and provides several benefits:
+ITEMDLE now features a **dynamic build curation system** that fetches the latest champion builds exclusively from mobalytics.gg using Playwright for Cloudflare bypass. This replaces the previous hardcoded builds system and provides several benefits:
 
 - ✅ **Always up-to-date**: Builds reflect the current meta for each patch
 - ✅ **Supports all champions**: Not limited to the 25 hardcoded champions
 - ✅ **Automatic role detection**: Uses the most popular role for each champion
-- ✅ **Single source**: Uses mobalytics.gg for consistent data
+- ✅ **Single source**: Uses only mobalytics.gg for consistent data
+- ✅ **Cloudflare bypass**: Uses Playwright with real browser automation to bypass Cloudflare challenges
 - ✅ **Graceful degradation**: Falls back to cached builds, then hardcoded builds
 
 ### Data Sources
 
 | Source | Priority | URL | Status |
 |--------|----------|-----|--------|
-| Mobalytics | Primary | https://mobalytics.gg | ⚠️ May be blocked by Cloudflare |
-| LoLalytics | Fallback | https://lolalytics.com | ✅ Live scraping |
+| Mobalytics | Primary | https://mobalytics.gg | ✅ Live scraping with Playwright Cloudflare bypass |
 
 ### Build Merging Algorithm
 
-Builds are fetched from mobalytics.gg (primary) with fallback to lolalytics.com. Uses FULL BUILD section for core items (6 items) and Situational Items section for situational items.
+Builds are fetched exclusively from mobalytics.gg. Uses FULL BUILD section for core items (6 items) and Situational Items section for situational items.
 
 ### Caching
 
@@ -48,16 +48,14 @@ User requests build for Ahri
     ↓
 Check localStorage cache (if <24h old)
     ↓
-Fetch from Mobalytics.gg
-    ↓
-If blocked by Cloudflare, fallback to LoLalytics
+Fetch from Mobalytics.gg using Playwright (bypasses Cloudflare)
     ↓
 Use FULL BUILD section for core, Situational Items for sit
     ↓
 Cache result (24h TTL)
     ↓
-Use merged build
-    ↓ (if all fail)
+Use dynamic build
+    ↓ (if scraping fails)
 Fallback to hardcoded BUILDS in data.js
 ```
 
@@ -119,9 +117,8 @@ xdg-open index.html
 ```
 
 The backend server will run on `http://localhost:3000` and automatically handle:
-- Fetching builds from mobalytics.gg
-- Detecting champion roles
-- Merging builds from both sources
+- Fetching builds from mobalytics.gg using Playwright (bypasses Cloudflare)
+- Detecting champion roles from page content with DEFAULT_ROLES fallback
 - CORS headers for local development
 
 ### Quick Start (Offline/Hardcoded Mode)
@@ -188,8 +185,8 @@ This solves the CORS issues with the previous client-side scraping approach.
 
 | File | Changes |
 |------|---------|
-| `server.js` | **New file** - Backend server with Express, handles scraping |
-| `package.json` | **New file** - Dependencies for backend (express, cors, axios, cheerio) |
+| `server.js` | **New file** - Backend server with Express + Playwright, handles scraping |
+| `package.json` | **New file** - Dependencies for backend (express, cors, cheerio, playwright) |
 | `js/buildFetcher.js` | **Updated** - Frontend client for backend API |
 | `js/api.js` | Updated to integrate dynamic build fetching |
 | `js/data.js` | Added `getHardcodedBuild()` helper |
@@ -199,8 +196,7 @@ This solves the CORS issues with the previous client-side scraping approach.
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/build/:champion` | Get merged build from both sources |
-| `GET /api/build/:champion` | Get build from mobalytics.gg |
+| `GET /api/build/:champion` | Get build from mobalytics.gg (using Playwright) |
 | `GET /api/health` | Health check endpoint |
 
 ### buildFetcher.js Frontend
@@ -226,7 +222,7 @@ The frontend client (`js/buildFetcher.js`) is now a thin wrapper that:
 - **Frontend**: HTML5, CSS3, Vanilla JavaScript (no frameworks)
 - **Backend**: Node.js, Express.js
 - **Data Dragon API**: Riot Games' official data API for League of Legends
-- **Dynamic Scraping**: Server-side scraping from mobalytics.gg using Axios + Cheerio
+- **Dynamic Scraping**: Server-side scraping from mobalytics.gg using Playwright + Cheerio
 - **CORS**: Backend handles CORS with the `cors` middleware
 - **Fontsource**: Google Fonts via CDN
 - **Storage**: localStorage for client-side caching
@@ -237,7 +233,7 @@ The frontend client (`js/buildFetcher.js`) is now a thin wrapper that:
 The dynamic build system works automatically when you load the game:
 1. Load `index.html` in a browser
 2. The game fetches the latest patch data from Riot
-3. For each champion, it attempts to fetch live builds from mobalytics.gg
+3. For each champion, it attempts to fetch live builds from mobalytics.gg using the backend with Playwright
 4. Builds are cached for 24 hours
 5. If fetching fails, it falls back to hardcoded builds
 
@@ -269,11 +265,10 @@ Or include the test script:
 
 | Scenario | Expected Result | Status |
 |----------|----------------|--------|
-| Both services return valid builds | Merged build with primary prioritized | ✅ |
-| One site is down | Use the other site's build | ✅ |
-| Both sites down | Fall back to cache → hardcoded | ✅ |
-| Champion missing on one site | Use the other site's build | ✅ |
-| Malformed data from a site | Skip the site and use the other | ✅ |
+| Mobalytics returns valid build | Use the mobalytics build | ✅ |
+| Mobalytics is down/blocked | Fall back to cache → hardcoded | ✅ |
+| Champion missing | Fall back to cache → hardcoded | ✅ |
+| Malformed data | Skip and use fallback | ✅ |
 | Cache is stale (>24h) | Re-fetch and update cache | ✅ |
 | No internet connection | Use cached or hardcoded builds | ✅ |
 
@@ -331,7 +326,7 @@ Or include the test script:
 
 - **Fallback to hardcoded**: Game always works, even if scraping fails
 - **24h client-side cache**: Minimizes repeated backend requests
-- **Dual source with fallback**: Backend tries mobalytics.gg first, falls back to lolalytics.com if Cloudflare blocks requests
+- **Cloudflare bypass**: Backend uses Playwright with real browser automation to bypass Cloudflare challenges
 - **Graceful degradation**: Worst case = hardcoded builds
 - **Easy deployment**: Backend can be deployed to any Node.js hosting service
 
