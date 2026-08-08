@@ -15,7 +15,9 @@ const BUILD_CACHE_KEY = 'itemdle_dynamic_builds';
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 // Feature flag: Enable dynamic build fetching (set to false to use only hardcoded builds)
-const ENABLE_DYNAMIC_FETCH = true;
+// NOTE: Public CORS proxies are unreliable. For production, set this to false
+// or implement a backend service. See README for details.
+const ENABLE_DYNAMIC_FETCH = false;
 
 // Service priorities (lolalytics is primary based on structure analysis)
 const PRIMARY_SERVICE = 'lolalytics';
@@ -36,7 +38,7 @@ const CORS_PROXIES = [
 ];
 
 // Debug mode - set to true to see detailed error logs
-const DEBUG = false;
+const DEBUG = true;
 
 // ============================================
 // CACHE MANAGEMENT
