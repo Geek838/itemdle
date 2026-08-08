@@ -10,13 +10,15 @@ function setMode(m) {
     render();
   };
   if (G && !G.done && G.guesses.length > 0) {
-    askConfirm("Switch mode?", "Your current round on " + G.champ.name + " will be abandoned.", () => {
-      if (m === "free" && !freeG) newFree();
+    askConfirm("Switch mode?", "Your current round on " + G.champ.name + " will be abandoned.", async () => {
+      if (m === "free" && !freeG) await newFree();
       go();
     });
   } else {
-    if (m === "free" && !freeG) newFree();
-    go();
+    (async () => {
+      if (m === "free" && !freeG) await newFree();
+      go();
+    })();
   }
 }
 
@@ -36,11 +38,11 @@ document.addEventListener("click", e => {
     case "newfree": {
       const G = freeG;
       if (G && !G.done && G.guesses.length > 0)
-        askConfirm("Start a new round?", "Current progress will be lost.", () => { newFree(); render(); });
-      else { newFree(); render(); }
+        askConfirm("Start a new round?", "Current progress will be lost.", async () => { await newFree(); render(); });
+      else { (async () => { await newFree(); render(); })(); }
       break;
     }
-    case "ov-newfree": closeAll(); newFree(); render(); break;
+    case "ov-newfree": closeAll(); (async () => { await newFree(); render(); })(); break;
     case "close-result": $("#ovResult").classList.remove("open"); break;
     case "close-how": $("#ovHow").classList.remove("open"); break;
     case "close-stats": $("#ovStats").classList.remove("open"); break;
@@ -68,8 +70,8 @@ addEventListener("resize", () => {
 (async function boot() {
   setupSearch();
   await loadRiotData();
-  initDaily();
-  newFree();
+  await initDaily();
+  await newFree();
   $("#loader").style.display = "none";
   render();
   if (SRC === "offline") toast("⚠️ Riot CDN unreachable — loaded offline patch 16.15 cache.");
