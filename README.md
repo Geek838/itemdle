@@ -22,6 +22,7 @@ ITEMDLE now features a **dynamic build curation system** that fetches the latest
 - ✅ **Automatic role detection**: Uses the most popular role for each champion
 - ✅ **Single source**: Uses mobalytics.gg data via Parse.bot
 - ✅ **No Cloudflare issues**: Parse.bot handles all scraping and bypass
+- ✅ **Server-side caching**: Builds cached for 24h, minimizing API usage (~30/month)
 - ✅ **Graceful degradation**: Falls back to cached builds, then hardcoded builds
 
 ### Data Sources
@@ -202,6 +203,11 @@ Browser caches in localStorage (24h TTL)
 
 This solves the CORS issues and Cloudflare blocking with the previous scraping approach.
 
+**Note on caching**: The backend server now caches builds for 24 hours and persists them to `.build_cache.json`. This means:
+- Daily Challenge: Only 1 Parse.bot API call per day (~30/month, well under 200 free tier)
+- Unlimited Mode: Additional champions are also cached
+- Server restart: Cache is loaded from disk, no data loss
+
 ### Files Modified for Dynamic Builds
 
 | File | Changes |
@@ -217,8 +223,10 @@ This solves the CORS issues and Cloudflare blocking with the previous scraping a
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/build/:champion` | Get build from Mobalytics via Parse.bot API |
-| `GET /api/health` | Health check endpoint |
+| `GET /api/build/:champion` | Get build from Mobalytics via Parse.bot API (cached for 24h) |
+| `GET /api/builds` | Get all cached builds and API call count |
+| `POST /api/cache/clear` | Clear the build cache |
+| `GET /api/health` | Health check with cache stats |
 
 ### buildFetcher.js Frontend
 
