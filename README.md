@@ -93,26 +93,60 @@ Fallback to hardcoded BUILDS in data.js
 
 ## Installation
 
-ITEMDLE is a web-based game. Simply open `index.html` in a modern web browser.
+ITEMDLE is a web-based game. For the best experience with dynamic build fetching, run the backend server.
 
 ### Requirements
 
 - Modern web browser (Chrome, Firefox, Safari, Edge)
-- Internet connection (for live patch data)
+- Internet connection (for live patch data and dynamic builds)
 - GitHub Pages or any web hosting (optional)
 
-### Quick Start
+### Quick Start (Dynamic Builds Enabled)
+
+For dynamic build fetching to work, you need to run the backend server:
 
 ```bash
 # Clone the repository
 git clone git@github.com:Geek838/itemdle.git
 cd itemdle
 
-# Open in browser
+# Install Node.js dependencies for the backend
+npm install
+
+# Start the backend server (in one terminal)
+node server.js
+# or for development with auto-restart:
+npm run dev
+
+# Open index.html in your browser (in another terminal)
+# For local development, no changes needed - backend runs on http://localhost:3000
 open index.html
 # or on Linux:
 xdg-open index.html
 ```
+
+The backend server will run on `http://localhost:3000` and automatically handle:
+- Fetching builds from lolalytics.com and op.gg
+- Detecting champion roles
+- Merging builds from both sources
+- CORS headers for local development
+
+### Quick Start (Offline/Hardcoded Mode)
+
+If you don't want to run the backend server, you can use hardcoded builds:
+
+```bash
+git clone git@github.com:Geek838/itemdle.git
+cd itemdle
+
+# Edit js/buildFetcher.js and set:
+ENABLE_DYNAMIC_FETCH = false;
+
+# Then open index.html
+open index.html
+```
+
+Note: Offline mode uses a limited set of hardcoded champion builds.
 
 ## Project Structure
 
@@ -120,12 +154,14 @@ xdg-open index.html
 itemdle/
 ├── index.html          # Main HTML file
 ├── README.md           # This file
+├── package.json        # Backend server dependencies
+├── server.js           # Backend server (Node.js/Express) for dynamic build fetching
 ├── css/
 │   └── styles.css      # Game styles
 └── js/
     ├── app.js          # Event wiring and boot
     ├── api.js          # Data fetching with offline fallback & dynamic builds
-    ├── buildFetcher.js # Dynamic build scraping from op.gg & lolalytics
+    ├── buildFetcher.js # Frontend client for backend API
     ├── data.js         # Constants, offline cache, curated builds (fallback)
     ├── game.js         # Game state management and actions
     ├── render.js       # Rendering, search, overlays
@@ -136,52 +172,72 @@ itemdle/
 
 ## Technical Implementation
 
+### Architecture Overview
+
+ITEMDLE now uses a **client-server architecture** for dynamic build fetching:
+
+```
+Browser (index.html) 
+    ↓ HTTP requests
+Backend Server (server.js:3000) 
+    ↓ Server-side scraping (no CORS issues)
+LoLalytics.com + OP.GG 
+    ↑ Returns HTML
+    ↓ Parse with Cheerio
+Backend returns JSON
+    ↓ 
+Browser caches in localStorage (24h TTL)
+```
+
+This solves the CORS issues with the previous client-side scraping approach.
+
 ### Files Modified for Dynamic Builds
 
 | File | Changes |
 |------|---------|
-| `js/buildFetcher.js` | **New file** - Core dynamic build fetching logic |
+| `server.js` | **New file** - Backend server with Express, handles scraping |
+| `package.json` | **New file** - Dependencies for backend (express, cors, axios, cheerio) |
+| `js/buildFetcher.js` | **Updated** - Frontend client for backend API |
 | `js/api.js` | Updated to integrate dynamic build fetching |
 | `js/data.js` | Added `getHardcodedBuild()` helper |
 | `index.html` | Added `<script src="js/buildFetcher.js">` |
 
-### buildFetcher.js Modules
+### Backend API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/build/:champion` | Get merged build from both sources |
+| `GET /api/build/:champion/lolalytics` | Get build from lolalytics only |
+| `GET /api/build/:champion/opgg` | Get build from op.gg only |
+| `GET /api/health` | Health check endpoint |
+
+### buildFetcher.js Frontend
+
+The frontend client (`js/buildFetcher.js`) is now a thin wrapper that:
 
 1. **Cache Management** (`loadBuildCache`, `saveBuildCache`, `getCachedBuild`, `cacheBuild`)
    - Uses `localStorage` with 24-hour TTL
    - Key: `itemdle_dynamic_builds`
 
-2. **HTTP Utilities** (`fetchThroughProxy`, `delay`)
-   - Uses public CORS proxy (api.allorigins.win)
-   - Implements rate limiting (1s between requests)
+2. **Backend Communication** (`fetchFromBackend`)
+   - Calls the local backend server
+   - Handles errors gracefully
 
-3. **Scraping Functions** (`scrapeLolalytics`, `scrapeOpgg`)
-   - Parses HTML to extract item build data
-   - Handles various page structures
-   - Multiple fallback extraction methods
-
-4. **Merging Logic** (`mergeBuilds`)
-   - Implements the priority-based merge algorithm
-   - Ensures exactly 6 core items
-   - Removes duplicates from situational
-
-5. **Role Detection** (`detectRole`)
-   - Scrapes most popular role from lolalytics
-   - Maps to standard role names (Mid, Top, Jungle, ADC, Support)
-   - Falls back to hardcoded defaults
-
-6. **Main Functions** (`fetchChampionBuild`, `getChampionBuild`)
-   - Orchestrates the fetch-merge-cache-fallback flow
+3. **Main Functions** (`fetchChampionBuild`, `getChampionBuild`)
+   - Checks cache first
+   - Fetches from backend if not cached
+   - Falls back to stale cache or hardcoded builds
    - Asynchronous with proper error handling
 
 ## Technologies Used
 
-- **HTML5, CSS3, JavaScript**: Core web technologies
+- **Frontend**: HTML5, CSS3, Vanilla JavaScript (no frameworks)
+- **Backend**: Node.js, Express.js
 - **Data Dragon API**: Riot Games' official data API for League of Legends
-- **Dynamic Scraping**: Fetches builds from op.gg and lolalytics.com
-- **CORS Proxy**: Uses api.allorigins.win for cross-origin requests
+- **Dynamic Scraping**: Server-side scraping from op.gg and lolalytics.com using Axios + Cheerio
+- **CORS**: Backend handles CORS with the `cors` middleware
 - **Fontsource**: Google Fonts via CDN
-- **No frameworks**: Pure vanilla JavaScript
+- **Storage**: localStorage for client-side caching
 
 ## Usage (Dynamic Builds)
 
@@ -271,30 +327,95 @@ Or include the test script:
 
 ## Known Limitations
 
-1. **CORS Proxy Dependency**: Uses public CORS proxy (api.allorigins.win) which may have:
-   - Rate limits
-   - Downtime
-   - Latency
+1. **Site Structure Changes**: If op.gg or lolalytics change their HTML structure, scraping may break
 
-2. **Site Structure Changes**: If op.gg or lolalytics change their HTML structure, scraping may break
+2. **Backend Dependency**: The dynamic build system requires the backend server to be running
 
-3. **Browser Security**: Some browsers may block mixed content or have strict CORS policies
+3. **Rate Limiting**: The backend implements basic rate limiting (1 request/second/IP)
 
-4. **No Backend**: Pure client-side solution means:
-   - No server-side caching
-   - Each user scrapes independently
-   - Higher load on source sites
+4. **No Public Hosting**: The backend needs to be self-hosted (or you can use a free service like Heroku, Render, Railway)
 
 ### Mitigation Strategies
 
 - **Fallback to hardcoded**: Game always works, even if scraping fails
-- **24h cache**: Minimizes repeated scraping
-- **Multiple sources**: If one site fails, try the other
+- **24h client-side cache**: Minimizes repeated backend requests
+- **Multiple sources**: Backend tries both lolalytics and op.gg
 - **Graceful degradation**: Worst case = hardcoded builds
+- **Easy deployment**: Backend can be deployed to any Node.js hosting service
+
+## Deployment
+
+### Local Development
+
+Run both the backend server and open the frontend:
+
+**Terminal 1 (Backend)**:
+```bash
+node server.js
+# or
+npm start
+```
+
+**Terminal 2 (Frontend)**:
+```bash
+# Simply open index.html in your browser
+```
+
+The frontend is configured to connect to `http://localhost:3000` by default.
+
+### Production Deployment
+
+#### Option 1: Deploy Backend to Heroku
+
+1. Create a new Heroku app
+2. Push the code:
+```bash
+heroku create
+git push heroku master
+```
+3. The server will start automatically
+4. Update `BACKEND_URL` in `js/buildFetcher.js` to your Heroku URL
+
+#### Option 2: Deploy Backend to Render/Railway
+
+1. Create a new Node.js service
+2. Set the `PORT` environment variable (usually provided by the platform)
+3. Deploy the code
+4. Update `BACKEND_URL` in `js/buildFetcher.js`
+
+#### Option 3: Use a Reverse Proxy (Nginx/Apache)
+
+Deploy the entire project (including the static files) and use a reverse proxy:
+
+**Nginx config**:
+```nginx
+server {
+    listen 80;
+    server_name yourdomain.com;
+    
+    # Backend API
+    location /api {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+    
+    # Frontend static files
+    location / {
+        root /path/to/itemdle;
+        try_files $uri $uri/ /index.html;
+    }
+}
+```
+
+Then update `BACKEND_URL` in `js/buildFetcher.js` to `/api` (relative path).
 
 ## Future Improvements
 
-- [ ] Add server-side scraping service (Node.js/Express)
+- [x] Add server-side scraping service (Node.js/Express) - **DONE**
 - [ ] Implement proper API endpoints if op.gg/lolalytics provide them
 - [ ] Add build validation to ensure data quality
 - [ ] Expand to all 160+ champions automatically
