@@ -8,38 +8,30 @@ ITEMDLE is a League of Legends guessing game where you identify the 6 core items
 - **Unlimited Mode**: Endless random champions
 - **Bonus Round**: Arrange found items in the correct purchase order
 - **Live Patch Data**: Auto-synced with the latest League of Legends patch via Data Dragon
-- **Dynamic Builds**: Builds are now fetched from op.gg and lolalytics.com on-demand
+- **Dynamic Builds**: Builds are now fetched from mobalytics.gg on-demand
 - **Offline Cache**: Fallback to cached builds (24h TTL) or offline patch data
 - **Statistics**: Track your wins, streak, and best scores
 - **Share Results**: Copy your results to share with friends
 
 ## Dynamic Build System
 
-ITEMDLE now features a **dynamic build curation system** that fetches the latest champion builds from popular League of Legends statistics websites. This replaces the previous hardcoded builds system and provides several benefits:
+ITEMDLE now features a **dynamic build curation system** that fetches the latest champion builds from mobalytics.gg. This replaces the previous hardcoded builds system and provides several benefits:
 
 - ✅ **Always up-to-date**: Builds reflect the current meta for each patch
 - ✅ **Supports all champions**: Not limited to the 25 hardcoded champions
 - ✅ **Automatic role detection**: Uses the most popular role for each champion
-- ✅ **Merged data**: Combines builds from multiple sources for accuracy
+- ✅ **Single source**: Uses mobalytics.gg for consistent data
 - ✅ **Graceful degradation**: Falls back to cached builds, then hardcoded builds
 
 ### Data Sources
 
 | Source | Priority | URL | Status |
 |--------|----------|-----|--------|
-| LoLalytics | Primary | https://lolalytics.com | ✅ Live scraping |
-| OP.GG | Secondary | https://op.gg | ✅ Live scraping |
+| Mobalytics | Primary | https://mobalytics.gg | ✅ Live scraping |
 
 ### Build Merging Algorithm
 
-When both services return build data, they are merged using the following logic:
-
-1. **Primary's core items** are used as the base
-2. For disagreements:
-   - If secondary lists a primary core item as situational → keep primary's classification
-   - If secondary has a unique core item not in primary → replace last primary core item with it
-3. **Situational items** = combined from both services, excluding all core items
-4. **Final core** is exactly 6 items
+Builds are fetched from mobalytics.gg using the FULL BUILD section for core items (6 items) and Situational Items section for situational items.
 
 ### Caching
 
@@ -55,11 +47,9 @@ User requests build for Ahri
     ↓
 Check localStorage cache (if <24h old)
     ↓
-Fetch from LoLalytics (primary)
+Fetch from Mobalytics.gg
     ↓
-Fetch from OP.GG (secondary)
-    ↓
-Merge builds using priority rules
+Use FULL BUILD section for core, Situational Items for sit
     ↓
 Cache result (24h TTL)
     ↓
@@ -126,7 +116,7 @@ xdg-open index.html
 ```
 
 The backend server will run on `http://localhost:3000` and automatically handle:
-- Fetching builds from lolalytics.com and op.gg
+- Fetching builds from mobalytics.gg
 - Detecting champion roles
 - Merging builds from both sources
 - CORS headers for local development
@@ -181,7 +171,7 @@ Browser (index.html)
     ↓ HTTP requests
 Backend Server (server.js:3000) 
     ↓ Server-side scraping (no CORS issues)
-LoLalytics.com + OP.GG 
+Mobalytics.gg 
     ↑ Returns HTML
     ↓ Parse with Cheerio
 Backend returns JSON
@@ -207,8 +197,7 @@ This solves the CORS issues with the previous client-side scraping approach.
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/build/:champion` | Get merged build from both sources |
-| `GET /api/build/:champion/lolalytics` | Get build from lolalytics only |
-| `GET /api/build/:champion/opgg` | Get build from op.gg only |
+| `GET /api/build/:champion` | Get build from mobalytics.gg |
 | `GET /api/health` | Health check endpoint |
 
 ### buildFetcher.js Frontend
@@ -234,7 +223,7 @@ The frontend client (`js/buildFetcher.js`) is now a thin wrapper that:
 - **Frontend**: HTML5, CSS3, Vanilla JavaScript (no frameworks)
 - **Backend**: Node.js, Express.js
 - **Data Dragon API**: Riot Games' official data API for League of Legends
-- **Dynamic Scraping**: Server-side scraping from op.gg and lolalytics.com using Axios + Cheerio
+- **Dynamic Scraping**: Server-side scraping from mobalytics.gg using Axios + Cheerio
 - **CORS**: Backend handles CORS with the `cors` middleware
 - **Fontsource**: Google Fonts via CDN
 - **Storage**: localStorage for client-side caching
@@ -245,7 +234,7 @@ The frontend client (`js/buildFetcher.js`) is now a thin wrapper that:
 The dynamic build system works automatically when you load the game:
 1. Load `index.html` in a browser
 2. The game fetches the latest patch data from Riot
-3. For each champion, it attempts to fetch live builds from lolalytics and op.gg
+3. For each champion, it attempts to fetch live builds from mobalytics.gg
 4. Builds are cached for 24 hours
 5. If fetching fails, it falls back to hardcoded builds
 
@@ -327,7 +316,7 @@ Or include the test script:
 
 ## Known Limitations
 
-1. **Site Structure Changes**: If op.gg or lolalytics change their HTML structure, scraping may break
+1. **Site Structure Changes**: If mobalytics.gg changes their HTML structure, scraping may break
 
 2. **Backend Dependency**: The dynamic build system requires the backend server to be running
 
@@ -339,7 +328,7 @@ Or include the test script:
 
 - **Fallback to hardcoded**: Game always works, even if scraping fails
 - **24h client-side cache**: Minimizes repeated backend requests
-- **Multiple sources**: Backend tries both lolalytics and op.gg
+- **Single source**: Backend uses mobalytics.gg only
 - **Graceful degradation**: Worst case = hardcoded builds
 - **Easy deployment**: Backend can be deployed to any Node.js hosting service
 
@@ -436,7 +425,7 @@ git push heroku master
 ## Future Improvements
 
 - [x] Add server-side scraping service (Node.js/Express) - **DONE**
-- [ ] Implement proper API endpoints if op.gg/lolalytics provide them
+- [ ] Implement proper API endpoints if mobalytics.gg provides them
 - [ ] Add build validation to ensure data quality
 - [ ] Expand to all 160+ champions automatically
 - [ ] Add version/patch detection for builds
@@ -445,13 +434,13 @@ git push heroku master
 ## Data Sources
 
 - **Champion & Item Data**: [Riot Games Data Dragon](https://ddragon.leagueoflegends.com)
-- **Community Builds**: Curated from community sources in the style of LoLalytics
+- **Community Builds**: Fetched from mobalytics.gg
 
 ## Credits
 
 - **Game Concept**: Inspired by Wordle and other daily guessing games
 - **Data**: Riot Games Data Dragon API
-- **Build Curations**: Community sources (LoLalytics style)
+- **Build Curations**: Fetched from mobalytics.gg
 
 ## License
 
