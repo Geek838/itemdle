@@ -30,8 +30,11 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Enable CORS for your frontend
+// For Render deployment, add your Static Site URL here, e.g.:
+// origin: ['https://itemdle.onrender.com', 'https://geek838.github.io']
+// The wildcard '*' allows all origins but is less secure
 app.use(cors({
-  origin: ['http://localhost:8080', 'https://geek838.github.io', '*']
+  origin: ['http://localhost:8080', 'https://geek838.github.io', 'https://itemdle.onrender.com', '*']
 }));
 
 // Rate limiting middleware

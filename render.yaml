@@ -1,0 +1,19 @@
+# Render deployment configuration for ITEMDLE
+# This file tells Render how to deploy the backend Web Service
+
+services:
+  # Backend API Service
+  - type: web
+    name: itemdle-api
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+    autoDeploy: true
+
+# Note: For the frontend (Static Site), create a separate Static Site service
+# in the Render dashboard that points to this repository.
+# The frontend will be served from: https://itemdle.onrender.com
+# The backend will be served from: https://itemdle-api.onrender.com

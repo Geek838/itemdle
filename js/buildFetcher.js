@@ -18,10 +18,11 @@ const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 // Set to true to use your own backend server, false to use hardcoded builds only
 const ENABLE_DYNAMIC_FETCH = true;
 
-// Backend server URL - Change this to your deployed server URL
+// Backend server URL - Change this to match your deployment
 // For local development: http://localhost:3000
-// For production: https://your-server-url.herokuapp.com
-const BACKEND_URL = 'http://localhost:3000';
+// For Render deployment: https://itemdle-api.onrender.com
+// For GitHub Pages frontend: keep as is, but update CORS in server.js
+const BACKEND_URL = 'https://itemdle-api.onrender.com';
 
 // Debug mode - set to true to see detailed error logs
 const DEBUG = true;

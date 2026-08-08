@@ -351,6 +351,7 @@ Run both the backend server and open the frontend:
 
 **Terminal 1 (Backend)**:
 ```bash
+npm install
 node server.js
 # or
 npm start
@@ -363,29 +364,38 @@ npm start
 
 The frontend is configured to connect to `http://localhost:3000` by default.
 
-### Production Deployment
+### Production Deployment (Option A: Separate Backend + Frontend)
 
-#### Option 1: Deploy Backend to Heroku
+For **Render**, use two separate services:
 
-1. Create a new Heroku app
-2. Push the code:
-```bash
-heroku create
-git push heroku master
-```
-3. The server will start automatically
-4. Update `BACKEND_URL` in `js/buildFetcher.js` to your Heroku URL
+#### Backend (Web Service)
+1. In Render dashboard, create a **Web Service**
+2. Connect your GitHub repository
+3. Set:
+   - **Name**: `itemdle-api`
+   - **Build Command**: `npm install`
+   - **Start Command**: `node server.js`
+4. Deploy - your backend will be at `https://itemdle-api.onrender.com`
 
-#### Option 2: Deploy Backend to Render/Railway
+#### Frontend (Static Site)
+1. In Render dashboard, create a **Static Site**
+2. Connect the same GitHub repository
+3. Set:
+   - **Name**: `itemdle`
+   - **Build Command**: (leave empty)
+   - **Publish Directory**: `.`
+4. Deploy - your frontend will be at `https://itemdle.onrender.com`
+5. **Important**: After deployment, update `BACKEND_URL` in `js/buildFetcher.js` to `https://itemdle-api.onrender.com` and commit/push
 
-1. Create a new Node.js service
-2. Set the `PORT` environment variable (usually provided by the platform)
-3. Deploy the code
-4. Update `BACKEND_URL` in `js/buildFetcher.js`
+**Alternative**: Use `render.yaml` for backend deployment:
+- The included `render.yaml` file configures the backend service
+- For frontend, create a Static Site manually in Render dashboard
 
-#### Option 3: Use a Reverse Proxy (Nginx/Apache)
+### Other Deployment Options
 
-Deploy the entire project (including the static files) and use a reverse proxy:
+#### Option B: Single Service with Reverse Proxy
+
+Deploy the entire project and use a reverse proxy:
 
 **Nginx config**:
 ```nginx
@@ -411,7 +421,17 @@ server {
 }
 ```
 
-Then update `BACKEND_URL` in `js/buildFetcher.js` to `/api` (relative path).
+Then set `BACKEND_URL = '/api'` in `js/buildFetcher.js`.
+
+#### Heroku
+
+1. Create a new Heroku app
+2. Push the code:
+```bash
+heroku create
+git push heroku master
+```
+3. Update `BACKEND_URL` in `js/buildFetcher.js` to your Heroku URL
 
 ## Future Improvements
 
