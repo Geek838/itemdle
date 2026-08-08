@@ -8,31 +8,49 @@ ITEMDLE is a League of Legends guessing game where you identify the 6 core items
 - **Unlimited Mode**: Endless random champions
 - **Bonus Round**: Arrange found items in the correct purchase order
 - **Live Patch Data**: Auto-synced with the latest League of Legends patch via Data Dragon
-- **Dynamic Builds**: Builds are fetched exclusively from mobalytics.gg on-demand using Playwright
+- **Dynamic Builds**: Builds are fetched from mobalytics.gg via Parse.bot API
 - **Offline Cache**: Fallback to cached builds (24h TTL) or offline patch data
 - **Statistics**: Track your wins, streak, and best scores
 - **Share Results**: Copy your results to share with friends
 
 ## Dynamic Build System
 
-ITEMDLE now features a **dynamic build curation system** that fetches the latest champion builds exclusively from mobalytics.gg using Playwright for Cloudflare bypass. This replaces the previous hardcoded builds system and provides several benefits:
+ITEMDLE now features a **dynamic build curation system** that fetches the latest champion builds from mobalytics.gg via the Parse.bot API. This replaces the previous hardcoded builds system and provides several benefits:
 
 - ✅ **Always up-to-date**: Builds reflect the current meta for each patch
 - ✅ **Supports all champions**: Not limited to the 25 hardcoded champions
 - ✅ **Automatic role detection**: Uses the most popular role for each champion
-- ✅ **Single source**: Uses only mobalytics.gg for consistent data
-- ✅ **Cloudflare bypass**: Uses Playwright with real browser automation to bypass Cloudflare challenges
+- ✅ **Single source**: Uses mobalytics.gg data via Parse.bot
+- ✅ **No Cloudflare issues**: Parse.bot handles all scraping and bypass
 - ✅ **Graceful degradation**: Falls back to cached builds, then hardcoded builds
 
 ### Data Sources
 
 | Source | Priority | URL | Status |
 |--------|----------|-----|--------|
-| Mobalytics | Primary | https://mobalytics.gg | ✅ Live scraping with Playwright Cloudflare bypass |
+| Parse.bot API | Primary | https://parse.bot/marketplace/.../mobalytics-gg-api | ✅ Managed REST API |
+| Mobalytics | Underlying | https://mobalytics.gg | Accessed via Parse.bot |
 
-### Build Merging Algorithm
+### Parse.bot API
 
-Builds are fetched exclusively from mobalytics.gg. Uses FULL BUILD section for core items (6 items) and Situational Items section for situational items.
+We use the [Parse.bot Mobalytics API](https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api) which provides:
+- Clean REST API access to mobalytics.gg data
+- No Cloudflare/blocking issues (managed by Parse.bot)
+- Automatic maintenance and updates
+- Structured JSON responses with item IDs
+
+The `get_champion_build` endpoint returns:
+- `items.core_items` - Core items (by ID)
+- `items.situational_items` - Situational items (by ID)
+- `role` - Champion role
+- `tier` - Champion tier
+- `stats` - Win rate, pick rate, ban rate
+
+We map item IDs to names using Data Dragon's item.json.
+
+### Build Data Flow
+
+Builds are fetched from mobalytics.gg via Parse.bot API. Item IDs are mapped to names using Riot's Data Dragon API.
 
 ### Caching
 
@@ -48,14 +66,14 @@ User requests build for Ahri
     ↓
 Check localStorage cache (if <24h old)
     ↓
-Fetch from Mobalytics.gg using Playwright (bypasses Cloudflare)
+Fetch from Parse.bot API (which connects to mobalytics.gg)
     ↓
-Use FULL BUILD section for core, Situational Items for sit
+Use core_items for core, situational for sit
     ↓
 Cache result (24h TTL)
     ↓
 Use dynamic build
-    ↓ (if scraping fails)
+    ↓ (if API fails)
 Fallback to hardcoded BUILDS in data.js
 ```
 
@@ -104,6 +122,9 @@ cd itemdle
 # Install Node.js dependencies for the backend
 npm install
 
+# Optional: Set your Parse.bot API key (a default is provided)
+export PARSE_API_KEY=your_api_key_here
+
 # Start the backend server (in one terminal)
 node server.js
 # or for development with auto-restart:
@@ -117,8 +138,8 @@ xdg-open index.html
 ```
 
 The backend server will run on `http://localhost:3000` and automatically handle:
-- Fetching builds from mobalytics.gg using Playwright (bypasses Cloudflare)
-- Detecting champion roles from page content with DEFAULT_ROLES fallback
+- Fetching builds from Parse.bot API (which connects to mobalytics.gg)
+- Detecting champion roles with DEFAULT_ROLES fallback
 - CORS headers for local development
 
 ### Quick Start (Offline/Hardcoded Mode)
@@ -170,23 +191,23 @@ ITEMDLE now uses a **client-server architecture** for dynamic build fetching:
 Browser (index.html) 
     ↓ HTTP requests
 Backend Server (server.js:3000) 
-    ↓ Server-side scraping (no CORS issues)
-Mobalytics.gg 
-    ↑ Returns HTML
-    ↓ Parse with Cheerio
+    ↓ HTTP request to Parse.bot API
+Parse.bot (parse.bot) 
+    ↓ Scrapes mobalytics.gg (handled by Parse.bot)
+    ↑ Returns JSON
 Backend returns JSON
     ↓ 
 Browser caches in localStorage (24h TTL)
 ```
 
-This solves the CORS issues with the previous client-side scraping approach.
+This solves the CORS issues and Cloudflare blocking with the previous scraping approach.
 
 ### Files Modified for Dynamic Builds
 
 | File | Changes |
 |------|---------|
-| `server.js` | **New file** - Backend server with Express + Playwright, handles scraping |
-| `package.json` | **New file** - Dependencies for backend (express, cors, cheerio, playwright) |
+| `server.js` | **New file** - Backend server with Express + Axios, connects to Parse.bot API |
+| `package.json` | **New file** - Dependencies for backend (express, cors, axios) |
 | `js/buildFetcher.js` | **Updated** - Frontend client for backend API |
 | `js/api.js` | Updated to integrate dynamic build fetching |
 | `js/data.js` | Added `getHardcodedBuild()` helper |
@@ -196,7 +217,7 @@ This solves the CORS issues with the previous client-side scraping approach.
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/build/:champion` | Get build from mobalytics.gg (using Playwright) |
+| `GET /api/build/:champion` | Get build from Mobalytics via Parse.bot API |
 | `GET /api/health` | Health check endpoint |
 
 ### buildFetcher.js Frontend
@@ -222,7 +243,7 @@ The frontend client (`js/buildFetcher.js`) is now a thin wrapper that:
 - **Frontend**: HTML5, CSS3, Vanilla JavaScript (no frameworks)
 - **Backend**: Node.js, Express.js
 - **Data Dragon API**: Riot Games' official data API for League of Legends
-- **Dynamic Scraping**: Server-side scraping from mobalytics.gg using Playwright + Cheerio
+- **Dynamic API**: Server-side fetching from Parse.bot API (mobalytics.gg data source)
 - **CORS**: Backend handles CORS with the `cors` middleware
 - **Fontsource**: Google Fonts via CDN
 - **Storage**: localStorage for client-side caching
@@ -233,7 +254,7 @@ The frontend client (`js/buildFetcher.js`) is now a thin wrapper that:
 The dynamic build system works automatically when you load the game:
 1. Load `index.html` in a browser
 2. The game fetches the latest patch data from Riot
-3. For each champion, it attempts to fetch live builds from mobalytics.gg using the backend with Playwright
+3. For each champion, it attempts to fetch live builds from Parse.bot API (mobalytics.gg data)
 4. Builds are cached for 24 hours
 5. If fetching fails, it falls back to hardcoded builds
 
@@ -326,7 +347,7 @@ Or include the test script:
 
 - **Fallback to hardcoded**: Game always works, even if scraping fails
 - **24h client-side cache**: Minimizes repeated backend requests
-- **Cloudflare bypass**: Backend uses Playwright with real browser automation to bypass Cloudflare challenges
+- **Managed API**: Backend uses Parse.bot API - no Cloudflare issues
 - **Graceful degradation**: Worst case = hardcoded builds
 - **Easy deployment**: Backend can be deployed to any Node.js hosting service
 
