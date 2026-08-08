@@ -2,6 +2,11 @@
 
 function setMode(m) {
   if (activeMode === m) return;
+  // Unlimited mode disabled temporarily
+  if (m === "free") {
+    toast("Unlimited mode is coming soon!");
+    return;
+  }
   const G = currentG();
   const go = () => {
     activeMode = m;
@@ -58,7 +63,8 @@ document.addEventListener("click", e => {
 $("#btnHow").addEventListener("click", () => $("#ovHow").classList.add("open"));
 $("#btnStats").addEventListener("click", openStats);
 $("#tabDaily").addEventListener("click", () => setMode("daily"));
-$("#tabFree").addEventListener("click", () => setMode("free"));
+// Unlimited mode disabled temporarily
+// $("#tabFree").addEventListener("click", () => setMode("free"));
 
 addEventListener("resize", () => {
   const cv = $("#fx");
@@ -71,7 +77,8 @@ addEventListener("resize", () => {
   setupSearch();
   await loadRiotData();
   await initDaily();
-  await newFree();
+  // Unlimited mode disabled temporarily - don't call newFree()
+  // await newFree();
   $("#loader").style.display = "none";
   render();
   if (SRC === "offline") toast("⚠️ Riot CDN unreachable — loaded offline patch 16.15 cache.");

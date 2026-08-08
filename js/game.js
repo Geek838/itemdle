@@ -108,7 +108,9 @@ function saveDaily(G) {
 }
 
 async function newFree() {
-  if (!POOL.length) return;
+  // Unlimited mode disabled temporarily
+  console.log("[game] Unlimited mode is disabled");
+  return;
   
   let pick;
   do { pick = POOL[Math.floor(Math.random() * POOL.length)]; }
