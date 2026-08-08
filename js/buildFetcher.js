@@ -1,4 +1,4 @@
-/* buildFetcher.js — Dynamic build fetching from op.gg and lolalytics */
+/* buildFetcher.js — Dynamic build fetching from mobalytics.gg */
 
 // ============================================
 // DEPENDENCIES
@@ -21,7 +21,6 @@ const ENABLE_DYNAMIC_FETCH = true;
 // Backend server URL - Change this to match your deployment
 // For local development: http://localhost:3000
 // For Render deployment: https://itemdle-api.onrender.com
-// For GitHub Pages frontend: keep as is, but update CORS in server.js
 const BACKEND_URL = 'https://itemdle-api.onrender.com';
 
 // Debug mode - set to true to see detailed error logs
@@ -98,13 +97,10 @@ function cacheBuild(championName, buildData) {
 /**
  * Fetch build from backend server
  * @param {string} championName - Champion name
- * @param {string} source - 'lolalytics', 'opgg', or null for merged
  * @returns {Promise<Object>} Build data
  */
-async function fetchFromBackend(championName, source = null) {
-  const endpoint = source 
-    ? `/api/build/${encodeURIComponent(championName)}/${source}`
-    : `/api/build/${encodeURIComponent(championName)}`;
+async function fetchFromBackend(championName) {
+  const endpoint = `/api/build/${encodeURIComponent(championName)}`;
   
   const url = BACKEND_URL + endpoint;
   
@@ -130,7 +126,7 @@ async function fetchFromBackend(championName, source = null) {
 // ============================================
 
 /**
- * Fetch champion build from backend (which handles merging from lolalytics and op.gg)
+ * Fetch champion build from backend (which scrapes mobalytics.gg)
  * @param {string} championName - Champion name (e.g., 'Ahri')
  * @returns {Promise<Object>} Build object matching existing format
  */
