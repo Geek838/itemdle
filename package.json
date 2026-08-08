@@ -1,7 +1,7 @@
 {
   "name": "itemdle-server",
   "version": "1.0.0",
-  "description": "Backend server for ITEMDLE - fetches dynamic champion builds exclusively from mobalytics.gg",
+  "description": "Backend server for ITEMDLE - fetches dynamic champion builds from mobalytics.gg via Parse.bot API",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -18,10 +18,8 @@
   "license": "MIT",
   "dependencies": {
     "axios": "^1.6.2",
-    "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "playwright": "^1.62.1"
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
