@@ -24,7 +24,7 @@
  * API SOURCE:
  * - Parse.bot Mobalytics API: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api
  * - Item names from Data Dragon (Riot Games)
- * - Scraper ID: 53405028-f65e-4c87-a55f-80a5b57efc50
+ * - Scraper ID: e7dd7967-737e-472d-90c0-f106c9882b4e
  * 
  * CACHING:
  * - Builds cached in memory for 24 hours
@@ -43,7 +43,7 @@ const PORT = process.env.PORT || 3000;
 
 // API keys
 const PARSE_API_KEY = process.env.PARSE_API_KEY || 'pmx_69d4b9e7ab7b168ded1558a8c9f9b9fa';
-const PARSE_API_URL = 'https://api.parse.bot/scraper/53405028-f65e-4c87-a55f-80a5b57efc50';
+const PARSE_API_URL = 'https://api.parse.bot/scraper/e7dd7967-737e-472d-90c0-f106c9882b4e';
 const DD_API_URL = 'https://ddragon.leagueoflegends.com';
 
 // Enable CORS for your frontend
