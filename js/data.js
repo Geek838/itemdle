@@ -141,3 +141,18 @@ const BUILD_NAMES = (() => {
   Object.entries(ALIAS).forEach(([k, v]) => { s.add(k); v.forEach(n => s.add(n)); });
   return [...s];
 })();
+
+/**
+ * Get hardcoded build for a champion by name
+ * @param {string} championName - Champion name
+ * @returns {Object|null} Build entry or null if not found
+ */
+function getHardcodedBuild(championName) {
+  const normalized = norm(championName);
+  for (const entry of BUILDS) {
+    if (norm(entry.ch) === normalized) {
+      return entry;
+    }
+  }
+  return null;
+}
