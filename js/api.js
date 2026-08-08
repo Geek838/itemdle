@@ -4,9 +4,40 @@ let VER = "", SRC = "live", ITEMS = [], ITEM_BY_NORM = {}, CHAMP = {}, POOL = []
 
 function buildPool() {
   POOL = [];
+  
+  // Build a map of hardcoded builds for quick lookup
+  const hardcodedBuildsMap = {};
   for (const entry of BUILDS) {
-    const r = resolveChampion(entry);
-    if (r) POOL.push(r);
+    const normalized = norm(entry.ch);
+    hardcodedBuildsMap[normalized] = entry;
+  }
+  
+  // Add all champions from CHAMP
+  for (const [champName, champData] of Object.entries(CHAMP)) {
+    const normalized = norm(champName);
+    
+    // Check if we have a hardcoded build for this champion
+    const hardcodedEntry = hardcodedBuildsMap[normalized];
+    if (hardcodedEntry) {
+      // Use the resolved champion with hardcoded build
+      const r = resolveChampion(hardcodedEntry);
+      if (r) {
+        POOL.push(r);
+      }
+    } else {
+      // Add champion without pre-resolved build
+      POOL.push({
+        name: champName,
+        key: champData.key,
+        num: champData.num,
+        role: 'Mid',
+        core: [],
+        sit: [],
+        coreSet: new Set(),
+        sitSet: new Set(),
+        source: 'dynamic'
+      });
+    }
   }
 }
 
@@ -115,19 +146,49 @@ async function loadRiotData() {
 }
 
 /**
- * Build pool - ONLY use hardcoded builds initially
- * Dynamic builds are fetched lazily when a champion is actually selected
- * This prevents rate limiting and excessive requests
+ * Build pool - Include ALL champions from Data Dragon
+ * Champions with hardcoded builds will have their builds pre-resolved
+ * For other champions, we'll fetch builds dynamically when selected
+ * This allows supporting all 170+ League champions
  */
 async function buildPoolDynamic() {
   POOL = [];
   
-  // Only build pool with hardcoded entries
-  // Dynamic builds will be fetched on-demand when needed
+  // Build a map of hardcoded builds for quick lookup
+  const hardcodedBuildsMap = {};
   for (const entry of BUILDS) {
-    const r = resolveChampion(entry);
-    if (r) POOL.push(r);
+    const normalized = norm(entry.ch);
+    hardcodedBuildsMap[normalized] = entry;
   }
   
-  console.log(`[api] Built pool with ${POOL.length} champions (hardcoded only)`);
+  // Add all champions from Data Dragon
+  for (const [champName, champData] of Object.entries(CHAMP)) {
+    const normalized = norm(champName);
+    
+    // Check if we have a hardcoded build for this champion
+    const hardcodedEntry = hardcodedBuildsMap[normalized];
+    if (hardcodedEntry) {
+      // Use the resolved champion with hardcoded build
+      const r = resolveChampion(hardcodedEntry);
+      if (r) {
+        POOL.push(r);
+      }
+    } else {
+      // Add champion without pre-resolved build
+      // Build will be fetched dynamically when selected
+      POOL.push({
+        name: champName,
+        key: champData.key,
+        num: champData.num,
+        role: 'Mid', // Default role, will be updated from dynamic fetch
+        core: [],
+        sit: [],
+        coreSet: new Set(),
+        sitSet: new Set(),
+        source: 'dynamic'
+      });
+    }
+  }
+  
+  console.log(`[api] Built pool with ${POOL.length} champions (${Object.keys(hardcodedBuildsMap).length} with hardcoded builds, rest dynamic)`);
 }
