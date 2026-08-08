@@ -38,16 +38,39 @@ app.use(cors({
 }));
 
 // Rate limiting middleware
+// Note: Render free tier has its own rate limits, so we use a generous limit here
+// This prevents abuse while allowing burst requests for the frontend pool loading
 const rateLimit = {};
-const RATE_LIMIT = 1000; // 1 request per second per IP
+const RATE_LIMIT = 200; // 5 requests per second per IP (200ms between requests)
+const MAX_REQUESTS_PER_WINDOW = 10; // Allow bursts of up to 10 requests
 
 function checkRateLimit(ip) {
   const now = Date.now();
-  if (!rateLimit[ip] || now - rateLimit[ip] > RATE_LIMIT) {
-    rateLimit[ip] = now;
-    return true;
+  
+  // Initialize tracking for this IP if not exists
+  if (!rateLimit[ip]) {
+    rateLimit[ip] = { timestamps: [], lastRequest: 0 };
   }
-  return false;
+  
+  const tracking = rateLimit[ip];
+  
+  // Remove old timestamps (older than 1 second)
+  tracking.timestamps = tracking.timestamps.filter(t => now - t < 1000);
+  
+  // Check if we've exceeded the burst limit
+  if (tracking.timestamps.length >= MAX_REQUESTS_PER_WINDOW) {
+    return false;
+  }
+  
+  // Check minimum interval between requests
+  if (tracking.lastRequest && now - tracking.lastRequest < RATE_LIMIT) {
+    return false;
+  }
+  
+  // Update tracking
+  tracking.timestamps.push(now);
+  tracking.lastRequest = now;
+  return true;
 }
 
 // Helper functions
@@ -307,7 +330,7 @@ function mergeBuilds(primaryBuild, secondaryBuild) {
 app.get('/api/build/:champion', async (req, res) => {
   const ip = req.ip;
   if (!checkRateLimit(ip)) {
-    return res.status(429).json({ error: 'Rate limited. Please wait 1 second.' });
+    return res.status(429).json({ error: 'Rate limited. Please wait a moment and try again.' });
   }
   
   try {
