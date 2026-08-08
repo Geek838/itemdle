@@ -30,8 +30,8 @@ async function initDaily() {
   if (!POOL.length) return;
   
   const saved = store.get("itemdle.daily." + todayKey());
-  let poolIndex = dailyNum() % POOL.length;
-  let hardcodedChamp = POOL[poolIndex];
+  const poolIndex = dailyNum() % POOL.length;
+  const hardcodedChamp = POOL[poolIndex];
   
   // Try to fetch dynamic build for this champion
   let champ = hardcodedChamp;
@@ -65,22 +65,6 @@ async function initDaily() {
       }
     } catch (e) {
       console.warn(`[game] Failed to fetch dynamic build for daily, using hardcoded:`, e);
-    }
-  }
-  
-  // Safety check: if champion has no build data, find the next one that does
-  if ((!champ.core || champ.core.length === 0) && (!champ.coreSet || champ.coreSet.size === 0)) {
-    console.warn(`[game] Champion ${champ.name} has no build data, finding fallback`);
-    // Try to find a champion with hardcoded build
-    for (let i = 0; i < POOL.length; i++) {
-      const testIndex = (poolIndex + i + 1) % POOL.length;
-      const testChamp = POOL[testIndex];
-      if (testChamp.coreSet && testChamp.coreSet.size >= 6) {
-        champ = testChamp;
-        poolIndex = testIndex;
-        console.log(`[game] Using fallback champion: ${champ.name}`);
-        break;
-      }
     }
   }
   
@@ -146,17 +130,6 @@ async function newFree() {
       }
     } catch (e) {
       console.warn(`[game] Failed to fetch dynamic build for free mode, using hardcoded:`, e);
-    }
-  }
-  
-  // Safety check: if champion has no build data, pick a random one with hardcoded build
-  if ((!champ.core || champ.core.length === 0) && (!champ.coreSet || champ.coreSet.size === 0)) {
-    console.warn(`[game] Champion ${champ.name} has no build data, finding fallback`);
-    const fallbackPool = POOL.filter(c => c.coreSet && c.coreSet.size >= 6);
-    if (fallbackPool.length > 0) {
-      const randomFallback = fallbackPool[Math.floor(Math.random() * fallbackPool.length)];
-      champ = randomFallback;
-      console.log(`[game] Using fallback champion for free mode: ${champ.name}`);
     }
   }
   
