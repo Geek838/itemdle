@@ -25,6 +25,14 @@ const USER_AGENT = 'ITEMDLE/1.0 (+https://github.com/Geek838/itemdle)';
 // Rate limiting
 const REQUEST_DELAY = 1000; // 1 second between requests to respect rate limits
 
+// Multiple CORS proxies for fallback
+// Note: Public proxies may be rate-limited or unavailable
+const CORS_PROXIES = [
+  'https://api.allorigins.win/raw?url=',
+  'https://cors-anywhere.herokuapp.com/',
+  'https://thingproxy.freeboard.io/fetch/',
+];
+
 // ============================================
 // CACHE MANAGEMENT
 // ============================================
@@ -103,14 +111,29 @@ function delay(ms) {
 }
 
 /**
- * Fetch URL through CORS proxy
+ * Fetch URL through CORS proxy with fallback
  * @param {string} url - URL to fetch
+ * @param {number} proxyIndex - Current proxy index (for recursion)
  * @returns {Promise<string>} HTML content
  */
-async function fetchThroughProxy(url) {
+async function fetchThroughProxy(url, proxyIndex = 0) {
+  // If we've tried all proxies, throw
+  if (proxyIndex >= CORS_PROXIES.length) {
+    throw new Error('All CORS proxies failed');
+  }
+  
   try {
-    // Encode the URL for the proxy
-    const proxyUrl = CORS_PROXY + encodeURIComponent(url);
+    const proxyBase = CORS_PROXIES[proxyIndex];
+    
+    // Some proxies need the URL appended directly, others need encoding
+    let proxyUrl;
+    if (proxyBase.includes('?url=') || proxyBase.includes('?quest=')) {
+      // Proxy expects URL as query parameter
+      proxyUrl = proxyBase + encodeURIComponent(url);
+    } else {
+      // Proxy expects URL appended directly
+      proxyUrl = proxyBase + encodeURIComponent(url);
+    }
     
     const response = await fetch(proxyUrl, {
       headers: {
@@ -120,12 +143,19 @@ async function fetchThroughProxy(url) {
     });
     
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`HTTP ${response.status} from ${proxyBase}`);
     }
     
     return await response.text();
   } catch (e) {
-    console.warn(`[buildFetcher] Proxy fetch failed for ${url}:`, e.message);
+    console.warn(`[buildFetcher] Proxy ${proxyIndex + 1} (${CORS_PROXIES[proxyIndex]}) failed for ${url}:`, e.message);
+    
+    // Try next proxy after a short delay
+    if (proxyIndex < CORS_PROXIES.length - 1) {
+      await delay(500); // Short delay before trying next proxy
+      return fetchThroughProxy(url, proxyIndex + 1);
+    }
+    
     throw e;
   }
 }
