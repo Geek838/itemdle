@@ -48,7 +48,9 @@ async function resolveChampionWithDynamic(entry) {
         }
       }
     } catch (e) {
-      console.warn(`[api] Dynamic build fetch failed for ${entry.ch}, falling back to hardcoded`);
+      if (typeof DEBUG !== 'undefined' && DEBUG) {
+        console.warn(`[api] Dynamic build fetch failed for ${entry.ch}, falling back to hardcoded`);
+      }
     }
   }
   
