@@ -4,10 +4,11 @@
 // DEPENDENCIES
 // ============================================
 
-// Use norm from utils.js if available, otherwise define it
-const norm = typeof window !== 'undefined' && window.norm 
-  ? window.norm 
-  : (s => String(s).toLowerCase().replace(/[^a-z0-9]/g, ""));
+// norm is defined in utils.js which is loaded before this file
+// If for some reason it's not available, define a fallback
+var norm = typeof norm === 'undefined' 
+  ? (s => String(s).toLowerCase().replace(/[^a-z0-9]/g, "")) 
+  : norm;
 
 // ============================================
 // CONFIGURATION
