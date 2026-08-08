@@ -13,9 +13,11 @@
 
 const BUILD_CACHE_KEY = 'itemdle_dynamic_builds';
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-const CORS_PROXY = 'https://api.allorigins.win/raw?url='; // Public CORS proxy
 
-// Service priorities (op.gg is easier to scrape based on structure analysis)
+// Feature flag: Enable dynamic build fetching (set to false to use only hardcoded builds)
+const ENABLE_DYNAMIC_FETCH = true;
+
+// Service priorities (lolalytics is primary based on structure analysis)
 const PRIMARY_SERVICE = 'lolalytics';
 const SECONDARY_SERVICE = 'opgg';
 
@@ -32,6 +34,9 @@ const CORS_PROXIES = [
   'https://cors-anywhere.herokuapp.com/',
   'https://thingproxy.freeboard.io/fetch/',
 ];
+
+// Debug mode - set to true to see detailed error logs
+const DEBUG = false;
 
 // ============================================
 // CACHE MANAGEMENT
@@ -148,7 +153,9 @@ async function fetchThroughProxy(url, proxyIndex = 0) {
     
     return await response.text();
   } catch (e) {
-    console.warn(`[buildFetcher] Proxy ${proxyIndex + 1} (${CORS_PROXIES[proxyIndex]}) failed for ${url}:`, e.message);
+    if (DEBUG) {
+      console.warn(`[buildFetcher] Proxy ${proxyIndex + 1} (${CORS_PROXIES[proxyIndex]}) failed for ${url}:`, e.message);
+    }
     
     // Try next proxy after a short delay
     if (proxyIndex < CORS_PROXIES.length - 1) {
@@ -361,14 +368,14 @@ async function scrapeLolalytics(championName, role = 'middle') {
     }
     
     if (buildData && buildData.core && buildData.core.length > 0) {
-      console.log(`[buildFetcher] Lolalytics build for ${championName}:`, buildData);
+      if (DEBUG) console.log(`[buildFetcher] Lolalytics build for ${championName}:`, buildData);
       return buildData;
     }
     
     throw new Error('No build data found on lolalytics');
     
   } catch (e) {
-    console.error(`[buildFetcher] Error scraping lolalytics for ${championName}:`, e);
+    if (DEBUG) console.error(`[buildFetcher] Error scraping lolalytics for ${championName}:`, e);
     throw e;
   }
 }
@@ -487,14 +494,14 @@ async function scrapeOpgg(championName, role = 'mid') {
     }
     
     if (buildData && buildData.core && buildData.core.length > 0) {
-      console.log(`[buildFetcher] OP.GG build for ${championName}:`, buildData);
+      if (DEBUG) console.log(`[buildFetcher] OP.GG build for ${championName}:`, buildData);
       return buildData;
     }
     
     throw new Error('No build data found on op.gg');
     
   } catch (e) {
-    console.error(`[buildFetcher] Error scraping op.gg for ${championName}:`, e);
+    if (DEBUG) console.error(`[buildFetcher] Error scraping op.gg for ${championName}:`, e);
     throw e;
   }
 }
@@ -669,12 +676,18 @@ async function detectRole(championName) {
  * @returns {Promise<Object>} Build object matching existing format
  */
 async function fetchChampionBuild(championName) {
+  // Skip if dynamic fetching is disabled
+  if (!ENABLE_DYNAMIC_FETCH) {
+    if (DEBUG) console.log(`[buildFetcher] Dynamic fetching disabled`);
+    return null;
+  }
+  
   const normalizedName = championName.trim();
   
   // Step 1: Check cache first
   const cached = getCachedBuild(normalizedName);
   if (cached) {
-    console.log(`[buildFetcher] Using cached build for ${normalizedName}`);
+    if (DEBUG) console.log(`[buildFetcher] Using cached build for ${normalizedName}`);
     return cached;
   }
   
@@ -758,11 +771,11 @@ async function fetchChampionBuild(championName) {
     // Step 6: Cache the result
     cacheBuild(normalizedName, result);
     
-    console.log(`[buildFetcher] Successfully fetched build for ${normalizedName}`, result);
+    if (DEBUG) console.log(`[buildFetcher] Successfully fetched build for ${normalizedName}`, result);
     return result;
     
   } catch (e) {
-    console.error(`[buildFetcher] Failed to fetch build for ${normalizedName}:`, e);
+    if (DEBUG) console.error(`[buildFetcher] Failed to fetch build for ${normalizedName}:`, e);
     return null; // Signal to use fallback
   }
 }
@@ -791,7 +804,7 @@ async function getChampionBuild(championName) {
   }
   
   // Fallback to hardcoded builds
-  console.log(`[buildFetcher] Using hardcoded build for ${championName}`);
+  if (DEBUG) console.log(`[buildFetcher] Using hardcoded build for ${championName}`);
   return null; // Signal to use BUILDS from data.js
 }
 
