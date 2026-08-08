@@ -309,9 +309,10 @@ async function fetchItemData() {
 // PARSE.BOT API CALLS
 // ============================================
 
-async function fetchFromParseBot(championName) {
+async function fetchFromParseBot(championName, role = 'mid') {
   const normalizedName = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const url = `${PARSE_API_URL}/get_champion_build?champion_slug=${normalizedName}`;
+  const normalizedRole = role.toLowerCase();
+  const url = `${PARSE_API_URL}/get_champion_build?champion_slug=${normalizedName}&role=${normalizedRole}`;
   
   try {
     apiCallCount++;
@@ -353,16 +354,16 @@ async function processParseBotResponse(parseData, championName) {
     throw new Error('No build data in Parse.bot response');
   }
   
-  // Get role
+  // Get role - prioritize API response, then fallback to defaults
   let role = 'Mid';
   if (parseData.data?.role) {
     role = ROLE_MAP[parseData.data.role.toUpperCase()] || parseData.data.role;
-  }
-  
-  // Fallback to DEFAULT_ROLES
-  const normalizedKey = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (DEFAULT_ROLES[normalizedKey]) {
-    role = DEFAULT_ROLES[normalizedKey];
+  } else {
+    // Fallback to DEFAULT_ROLES if API doesn't provide role
+    const normalizedKey = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (DEFAULT_ROLES[normalizedKey]) {
+      role = DEFAULT_ROLES[normalizedKey];
+    }
   }
   
   // Extract items from the build
@@ -477,7 +478,7 @@ app.get('/api/build/:champion', async (req, res) => {
     // Not in cache, fetch from Parse.bot
     let parseData;
     try {
-      parseData = await fetchFromParseBot(normalizedName);
+      parseData = await fetchFromParseBot(normalizedName, role);
     } catch (e) {
       console.error(`[server] Failed to fetch from Parse.bot for ${normalizedName}:`, e.message);
       return res.status(500).json({ 
