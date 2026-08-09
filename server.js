@@ -6,7 +6,7 @@
  * USAGE:
  * 1. Install Node.js (v16+)
  * 2. npm install express cors axios
- * 3. Set PARSE_API_KEY environment variable (optional, defaults to provided key)
+ * 3. Set PARSE_API_KEY environment variable (required)
  * 4. node server.js
  * 5. The server runs on http://localhost:3000
  * 
@@ -42,7 +42,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // API keys
-const PARSE_API_KEY = process.env.PARSE_API_KEY || 'REDACTED_API_KEY';
+const PARSE_API_KEY = process.env.PARSE_API_KEY;
+
+if (!PARSE_API_KEY) {
+  console.error('[server] PARSE_API_KEY environment variable is required');
+  console.error('[server] Get your API key from: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api');
+  process.exit(1);
+}
 const PARSE_API_URL = 'https://api.parse.bot/scraper/e7dd7967-737e-472d-90c0-f106c9882b4e';
 const DD_API_URL = 'https://ddragon.leagueoflegends.com';
 
@@ -581,7 +587,7 @@ app.listen(PORT, () => {
   console.log(`Try: http://localhost:${PORT}/api/build/ahri`);
   console.log(`Using Parse.bot API to fetch from mobalytics.gg`);
   console.log(`Builds are cached for 24h to minimize API usage`);
-  console.log(`API Key: ${PARSE_API_KEY.substring(0, 8)}...`);
+  console.log(`API Key: ${PARSE_API_KEY ? '*****' : 'NOT SET'} `);
   console.log(`Cached builds: ${Object.keys(buildCache).length}`);
 });
 

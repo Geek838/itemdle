@@ -123,7 +123,8 @@ cd itemdle
 # Install Node.js dependencies for the backend
 npm install
 
-# Optional: Set your Parse.bot API key (a default is provided)
+# REQUIRED: Set your Parse.bot API key
+# Get your free API key from: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api
 export PARSE_API_KEY=your_api_key_here
 
 # Start the backend server (in one terminal)
