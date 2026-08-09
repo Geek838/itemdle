@@ -47,20 +47,18 @@ const app = express();
 // ENVIRONMENT VALIDATION
 // ============================================
 
-const requiredEnvVars = {
-  PARSE_API_KEY: 'Get your API key from: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api'
-};
-
-for (const [varName, helpText] of Object.entries(requiredEnvVars)) {
-  if (!process.env[varName]) {
-    console.error(`[server] ${varName} environment variable is required`);
-    console.error(`[server] ${helpText}`);
-    process.exit(1);
-  }
-}
-
 const PORT = process.env.PORT || 3000;
 const PARSE_API_KEY = process.env.PARSE_API_KEY;
+
+// Only require PARSE_API_KEY if using Parse.bot as the source
+const BUILD_SOURCE = process.env.BUILD_SOURCE || (PARSE_API_KEY ? 'parsebot' : 'leaguebuilds');
+
+if (BUILD_SOURCE === 'parsebot' && !PARSE_API_KEY) {
+  console.error('[server] PARSE_API_KEY environment variable is required for Parse.bot');
+  console.error('[server] Get your API key from: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api');
+  console.error('[server] OR set BUILD_SOURCE=leaguebuilds to use LeagueBuilds (no API key needed)');
+  process.exit(1);
+}
 const PARSE_API_URL = process.env.PARSE_API_URL || 'https://api.parse.bot/scraper/e7dd7967-737e-472d-90c0-f106c9882b4e';
 const DD_API_URL = process.env.DD_API_URL || 'https://ddragon.leagueoflegends.com';
 
@@ -69,9 +67,6 @@ const DD_API_URL = process.env.DD_API_URL || 'https://ddragon.leagueoflegends.co
 // ============================================
 // Set BUILD_SOURCE to 'parsebot' (default) or 'leaguebuilds'
 // If PARSE_API_KEY is not set, automatically falls back to leaguebuilds
-const BUILD_SOURCE = process.env.BUILD_SOURCE || (PARSE_API_KEY ? 'parsebot' : 'leaguebuilds');
-
-// LeagueBuilds configuration
 const LEAGUEBUILDS_URL = process.env.LEAGUEBUILDS_URL || 'https://leaguebuilds.hopto.org';
 
 console.log(`[server] Using build source: ${BUILD_SOURCE}`);
