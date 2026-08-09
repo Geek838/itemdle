@@ -37,25 +37,76 @@ const cors = require('cors');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// API keys
-const PARSE_API_KEY = process.env.PARSE_API_KEY;
+// ============================================
+// ENVIRONMENT VALIDATION
+// ============================================
 
-if (!PARSE_API_KEY) {
-  console.error('[server] PARSE_API_KEY environment variable is required');
-  console.error('[server] Get your API key from: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api');
-  process.exit(1);
+const requiredEnvVars = {
+  PARSE_API_KEY: 'Get your API key from: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api'
+};
+
+for (const [varName, helpText] of Object.entries(requiredEnvVars)) {
+  if (!process.env[varName]) {
+    console.error(`[server] ${varName} environment variable is required`);
+    console.error(`[server] ${helpText}`);
+    process.exit(1);
+  }
 }
-const PARSE_API_URL = 'https://api.parse.bot/scraper/e7dd7967-737e-472d-90c0-f106c9882b4e';
-const DD_API_URL = 'https://ddragon.leagueoflegends.com';
 
-// Enable CORS for your frontend
-app.use(cors({
-  origin: ['http://localhost:8080', 'https://geek838.github.io', 'https://itemdle.onrender.com', '*']
+const PORT = process.env.PORT || 3000;
+const PARSE_API_KEY = process.env.PARSE_API_KEY;
+const PARSE_API_URL = process.env.PARSE_API_URL || 'https://api.parse.bot/scraper/e7dd7967-737e-472d-90c0-f106c9882b4e';
+const DD_API_URL = process.env.DD_API_URL || 'https://ddragon.leagueoflegends.com';
+
+// Parse allowed origins from environment variable (comma-separated)
+const getAllowedOrigins = () => {
+  if (process.env.ALLOWED_ORIGINS) {
+    return process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim());
+  }
+  // Default origins for development
+  return ['http://localhost:8080', 'http://localhost:3000', 'http://127.0.0.1:8080'];
+};
+
+// ============================================
+// SECURITY MIDDLEWARE
+// ============================================
+
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for now as it may break Data Dragon image loading
+  crossOriginEmbedderPolicy: false
 }));
+
+// Rate limiting for API endpoints
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200, // limit each IP to 200 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later', fallback: 'hardcoded' },
+  skip: (req) => req.path === '/api/health' // Don't rate limit health checks
+});
+
+// Apply rate limiting to API routes
+app.use('/api/', apiLimiter);
+
+// Enable CORS with configured origins
+const allowedOrigins = getAllowedOrigins();
+console.log(`[server] Allowed origins: ${allowedOrigins.join(', ')}`);
+
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+  optionsSuccessStatus: 200
+}));
+
+// Trust proxy for correct IP detection (important for rate limiting in production)
+app.set('trust proxy', true);
 
 // ============================================
 // SERVER-SIDE CACHING
@@ -63,8 +114,11 @@ app.use(cors({
 
 // Build cache: championName -> { buildData, timestamp }
 let buildCache = {};
-const BUILD_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const BUILD_CACHE_TTL = parseInt(process.env.BUILD_CACHE_TTL || '86400000'); // 24 hours default
 const BUILD_CACHE_FILE = path.join(__dirname, '.build_cache.json');
+
+// Cache save debounce timer
+let cacheSaveTimeout = null;
 
 // Item ID to name cache
 let itemIdToNameCache = null;
@@ -119,10 +173,9 @@ function cacheBuild(championName, buildData) {
     timestamp: Date.now()
   };
   
-  // Save to file periodically (not on every request to avoid I/O overhead)
-  if (Math.random() < 0.1) { // 10% chance to save on each cache update
-    saveBuildCache();
-  }
+  // Debounced save to file (saves after 1 second of inactivity)
+  clearTimeout(cacheSaveTimeout);
+  cacheSaveTimeout = setTimeout(saveBuildCache, 1000);
 }
 
 // Save cache on shutdown
@@ -151,37 +204,42 @@ process.on('SIGINT', () => {
 // ============================================
 // RATE LIMITING
 // ============================================
-
-const rateLimit = {};
-const RATE_LIMIT = 2000; // 2 seconds between requests
-const MAX_REQUESTS_PER_WINDOW = 5; // Allow bursts of up to 5 requests
-
-function checkRateLimit(ip) {
-  const now = Date.now();
-  
-  if (!rateLimit[ip]) {
-    rateLimit[ip] = { timestamps: [], lastRequest: 0 };
-  }
-  
-  const tracking = rateLimit[ip];
-  tracking.timestamps = tracking.timestamps.filter(t => now - t < 60000); // 1 minute window
-  
-  if (tracking.timestamps.length >= MAX_REQUESTS_PER_WINDOW) {
-    return false;
-  }
-  
-  if (tracking.lastRequest && now - tracking.lastRequest < RATE_LIMIT) {
-    return false;
-  }
-  
-  tracking.timestamps.push(now);
-  tracking.lastRequest = now;
-  return true;
-}
+// Rate limiting is now handled by express-rate-limit middleware
+// Applied to all /api/* routes with 200 requests per 15 minutes per IP
+// See: Security Middleware section above
 
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
+
+/**
+ * Convert technical error messages to user-friendly messages
+ * @param {string} errorMessage - Technical error message
+ * @returns {string} User-friendly error message
+ */
+function getUserFriendlyError(errorMessage) {
+  const errorMap = {
+    'Rate limited by Parse.bot API': 'Build service is currently busy. Using cached builds.',
+    'Champion not found on Parse.bot API': 'Champion not found. Using fallback builds.',
+    'Parse.bot API key invalid': 'Server configuration error. Please contact support.',
+    'No build data in Parse.bot response': 'No build data available. Using fallback builds.',
+    'Insufficient items in Parse.bot response': 'Could not retrieve complete build. Using fallback builds.',
+    'Parse.bot API request failed': 'Could not connect to build service. Using cached builds.',
+    'Failed to fetch item data from Data Dragon': 'Item data unavailable. Using cached item data.',
+    'Network Error': 'Network error. Please check your connection.',
+    'ETIMEDOUT': 'Request timed out. Please try again.',
+    'ECONNREFUSED': 'Could not connect to the service. Please try again later.'
+  };
+  
+  for (const [technical, friendly] of Object.entries(errorMap)) {
+    if (errorMessage.includes(technical)) {
+      return friendly;
+    }
+  }
+  
+  // Return a sanitized version of the original message
+  return errorMessage.replace(/[^a-zA-Z0-9\s:.,-]/g, '');
+}
 
 function norm(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
@@ -455,17 +513,34 @@ async function processParseBotResponse(parseData, championName) {
 
 // Get build for a specific champion
 app.get('/api/build/:champion', async (req, res) => {
-  const ip = req.ip;
-  if (!checkRateLimit(ip)) {
-    return res.status(429).json({ 
-      error: 'Rate limited. Please wait a moment and try again.',
-      fallback: 'hardcoded'
-    });
-  }
-  
   try {
     const { champion } = req.params;
+    
+    // Input validation
+    if (!champion || typeof champion !== 'string') {
+      return res.status(400).json({ 
+        error: 'Invalid champion name: must be a non-empty string',
+        fallback: 'hardcoded'
+      });
+    }
+    
+    // Sanitize and validate champion name
     const normalizedName = champion.trim();
+    if (normalizedName.length === 0) {
+      return res.status(400).json({ 
+        error: 'Champion name cannot be empty',
+        fallback: 'hardcoded'
+      });
+    }
+    
+    // Check for potentially malicious input
+    if (normalizedName.length > 50) {
+      return res.status(400).json({ 
+        error: 'Champion name too long',
+        fallback: 'hardcoded'
+      });
+    }
+    
     const normalizedKey = normalizedName.toLowerCase().replace(/[^a-z0-9]/g, '');
     let role = DEFAULT_ROLES[normalizedKey] || 'Mid';
     
@@ -487,8 +562,9 @@ app.get('/api/build/:champion', async (req, res) => {
       parseData = await fetchFromParseBot(normalizedName, role);
     } catch (e) {
       console.error(`[server] Failed to fetch from Parse.bot for ${normalizedName}:`, e.message);
+      const userFriendlyError = getUserFriendlyError(e.message);
       return res.status(500).json({ 
-        error: `Failed to fetch build: ${e.message}`,
+        error: userFriendlyError,
         fallback: 'hardcoded'
       });
     }
@@ -500,8 +576,9 @@ app.get('/api/build/:champion', async (req, res) => {
       role = build.role || role;
     } catch (e) {
       console.error(`[server] Failed to process Parse.bot response for ${normalizedName}:`, e.message);
+      const userFriendlyError = getUserFriendlyError(e.message);
       return res.status(500).json({ 
-        error: `Failed to process build data: ${e.message}`,
+        error: userFriendlyError,
         fallback: 'hardcoded'
       });
     }
@@ -533,8 +610,9 @@ app.get('/api/build/:champion', async (req, res) => {
     
   } catch (e) {
     console.error(`[server] Error fetching build for ${req.params.champion}:`, e);
+    const userFriendlyError = getUserFriendlyError(e.message || String(e));
     res.status(500).json({ 
-      error: 'Failed to fetch build data',
+      error: userFriendlyError,
       fallback: 'hardcoded'
     });
   }
@@ -583,12 +661,20 @@ fetchItemData().catch(e => {
 });
 
 app.listen(PORT, () => {
-  console.log(`ITEMDLE backend server running on port ${PORT}`);
-  console.log(`Try: http://localhost:${PORT}/api/build/ahri`);
-  console.log(`Using Parse.bot API to fetch from mobalytics.gg`);
-  console.log(`Builds are cached for 24h to minimize API usage`);
-  console.log(`API Key: ${PARSE_API_KEY ? '*****' : 'NOT SET'} `);
-  console.log(`Cached builds: ${Object.keys(buildCache).length}`);
+  console.log(`
+  ╔══════════════════════════════════════════════════════════════╗`);
+  console.log(`  ║          ITEMDLE Backend Server                           ║`);
+  console.log(`  ╠══════════════════════════════════════════════════════════════╣`);
+  console.log(`  ║  Server:        http://localhost:${PORT}                          ║`);
+  console.log(`  ║  API Source:   Parse.bot (mobalytics.gg)                        ║`);
+  console.log(`  ║  Cache TTL:    ${BUILD_CACHE_TTL / (60 * 60 * 1000)} hours                          ║`);
+  console.log(`  ║  Cached:       ${Object.keys(buildCache).length} builds loaded                    ║`);
+  console.log(`  ║  Rate Limit:   200 requests/15min per IP                         ║`);
+  console.log(`  ║  Origins:      ${allowedOrigins.join(', ')}                 ║`);
+  console.log(`  ╚══════════════════════════════════════════════════════════════╝
+  `);
+  console.log(`  Try: http://localhost:${PORT}/api/build/ahri`);
+  console.log(`  Health: http://localhost:${PORT}/api/health`);
 });
 
 module.exports = app;

@@ -11,6 +11,10 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PARSE_API_KEY
+        fromServiceEnv: true
+      - key: ALLOWED_ORIGINS
+        value: https://itemdle.onrender.com,https://geek838.github.io,http://localhost:8080
     autoDeploy: true
 
 # Note: For the frontend (Static Site), create a separate Static Site service

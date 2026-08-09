@@ -125,7 +125,12 @@ npm install
 
 # REQUIRED: Set your Parse.bot API key
 # Get your free API key from: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api
+# Option 1: Export in terminal (temporary)
 export PARSE_API_KEY=your_api_key_here
+
+# Option 2: Create .env file (recommended - copy .env.example)
+cp .env.example .env
+# Then edit .env and add your API key
 
 # Start the backend server (in one terminal)
 node server.js
@@ -392,7 +397,11 @@ For **Render**, use two separate services:
    - **Name**: `itemdle-api`
    - **Build Command**: `npm install`
    - **Start Command**: `node server.js`
-4. Deploy - your backend will be at `https://itemdle-api.onrender.com`
+4. **Add Environment Variables:**
+   - `PARSE_API_KEY`: Your Parse.bot API key (required)
+   - `ALLOWED_ORIGINS`: `https://itemdle.onrender.com,https://geek838.github.io` (comma-separated)
+   - `PORT`: `10000` (or use Render's default)
+5. Deploy - your backend will be at `https://itemdle-api.onrender.com`
 
 #### Frontend (Static Site)
 1. In Render dashboard, create a **Static Site**
