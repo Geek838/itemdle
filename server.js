@@ -1,35 +1,36 @@
 /**
  * server.js - Backend proxy for ITEMDLE dynamic build fetching
  * 
- * Fetches builds from Mobalytics via Parse.bot API with server-side caching
+ * Fetches builds from Mobalytics via Parse.bot API OR LeagueBuilds with server-side caching
  * 
  * USAGE:
  * 1. Install Node.js (v16+)
- * 2. npm install express cors axios
- * 3. Set PARSE_API_KEY environment variable (required)
+ * 2. npm install express cors axios helmet express-rate-limit
+ * 3. Set environment variables (see .env.example)
  * 4. node server.js
  * 5. The server runs on http://localhost:3000
  * 
  * ENDPOINTS:
- * - GET /api/build/:champion - Get build for champion from Mobalytics via Parse.bot
+ * - GET /api/build/:champion - Get build for champion (Mobalytics via Parse.bot OR LeagueBuilds)
  * - GET /api/builds - Get all cached builds
  * - GET /api/health - Health check
  * 
  * DEPLOYMENT:
  * - Deploy to Heroku, Render, Railway, or any Node.js hosting
- * - Set PORT and PARSE_API_KEY environment variables
+ * - Set PORT and PARSE_API_KEY (for Parse.bot) or use LeagueBuilds (no key needed)
  * - Configure CORS origins as needed
- * - Note: Server caches builds for 24h to minimize Parse.bot API usage
+ * - Note: Server caches builds for 24h to minimize API usage
  * 
- * API SOURCE:
+ * API SOURCES:
  * - Parse.bot Mobalytics API: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api
+ * - LeagueBuilds API: https://leaguebuilds.hopto.org (Free, no API key, sorted by frequency)
  * - Item names from Data Dragon (Riot Games)
- * - Scraper ID: e7dd7967-737e-472d-90c0-f106c9882b4e
  * 
  * CACHING:
  * - Builds cached in memory for 24 hours
  * - Item data cached for 1 hour
- * - Typical usage: ~30 Parse.bot API calls/month (well under 200 free tier limit)
+ * - Parse.bot: ~30 API calls/month (free tier)
+ * - LeagueBuilds: 60-120 requests/minute (free)
  */
 
 const express = require('express');
@@ -63,6 +64,18 @@ const PARSE_API_KEY = process.env.PARSE_API_KEY;
 const PARSE_API_URL = process.env.PARSE_API_URL || 'https://api.parse.bot/scraper/e7dd7967-737e-472d-90c0-f106c9882b4e';
 const DD_API_URL = process.env.DD_API_URL || 'https://ddragon.leagueoflegends.com';
 
+// ============================================
+// API SOURCE CONFIGURATION
+// ============================================
+// Set BUILD_SOURCE to 'parsebot' (default) or 'leaguebuilds'
+// If PARSE_API_KEY is not set, automatically falls back to leaguebuilds
+const BUILD_SOURCE = process.env.BUILD_SOURCE || (PARSE_API_KEY ? 'parsebot' : 'leaguebuilds');
+
+// LeagueBuilds configuration
+const LEAGUEBUILDS_URL = process.env.LEAGUEBUILDS_URL || 'https://leaguebuilds.hopto.org';
+
+console.log(`[server] Using build source: ${BUILD_SOURCE}`);
+
 // Parse allowed origins from environment variable (comma-separated)
 const getAllowedOrigins = () => {
   if (process.env.ALLOWED_ORIGINS) {
@@ -83,13 +96,18 @@ app.use(helmet({
 }));
 
 // Rate limiting for API endpoints
+// For production: set trustProxy to the number of proxies (e.g., 1 for Render, Heroku, etc.)
+// For development: set to 0 or false
+const trustProxyCount = process.env.NODE_ENV === 'production' ? 1 : 0;
+
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 200, // limit each IP to 200 requests per windowMs
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later', fallback: 'hardcoded' },
-  skip: (req) => req.path === '/api/health' // Don't rate limit health checks
+  skip: (req) => req.path === '/api/health', // Don't rate limit health checks
+  trustProxy: trustProxyCount
 });
 
 // Apply rate limiting to API routes
@@ -104,9 +122,6 @@ app.use(cors({
   credentials: true,
   optionsSuccessStatus: 200
 }));
-
-// Trust proxy for correct IP detection (important for rate limiting in production)
-app.set('trust proxy', true);
 
 // ============================================
 // SERVER-SIDE CACHING
@@ -287,6 +302,247 @@ const ROLE_MAP = {
   'SUPPORT': 'Support',
   'SUP': 'Support'
 };
+
+// ============================================
+// LEAGUEBUILDS API FUNCTIONS
+// ============================================
+
+/**
+ * Parse Python list string format to JavaScript array
+ * LeagueBuilds returns lists as Python string representations like "[1, 2, 3]"
+ * @param {string} listStr - Python list as string
+ * @returns {Array} JavaScript array of numbers or strings
+ */
+function parsePythonList(listStr) {
+  if (!listStr || typeof listStr !== 'string') {
+    return [];
+  }
+  
+  // Remove outer brackets
+  const inner = listStr.trim().slice(1, -1);
+  
+  if (!inner) {
+    return [];
+  }
+  
+  // Split by commas and clean each element
+  // Handle nested lists by only splitting at top level
+  const elements = [];
+  let current = '';
+  let depth = 0;
+  
+  for (let i = 0; i < inner.length; i++) {
+    const char = inner[i];
+    
+    if (char === '[') {
+      depth++;
+      current += char;
+    } else if (char === ']') {
+      depth--;
+      current += char;
+    } else if (char === ',' && depth === 0) {
+      elements.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  
+  // Add the last element
+  if (current.trim()) {
+    elements.push(current.trim());
+  }
+  
+  // Convert each element to number if possible
+  return elements.map(el => {
+    // Try to parse as number
+    const num = Number(el);
+    if (!isNaN(num)) {
+      return num;
+    }
+    // If it's a nested list, recursively parse it
+    if (el.startsWith('[') && el.endsWith(']')) {
+      return parsePythonList(el);
+    }
+    return el;
+  });
+}
+
+/**
+ * Fetch champion build from LeagueBuilds API
+ * @param {string} championName - Champion name (e.g., 'Ahri')
+ * @param {string} role - Champion role/position (e.g., 'Mid')
+ * @returns {Promise<Object>} Build data with core and sit items
+ */
+async function fetchFromLeagueBuilds(championName, role = 'mid') {
+  const normalizedName = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const position = role.toLowerCase();
+  const url = `${LEAGUEBUILDS_URL}/builds_v1/${normalizedName}/${position}`;
+  
+  try {
+    const response = await axios.get(url, {
+      timeout: 30000,
+      validateStatus: function (status) {
+        return status < 500; // Accept 4xx responses
+      }
+    });
+    
+    if (response.status !== 200) {
+      throw new Error(`LeagueBuilds API returned ${response.status}`);
+    }
+    
+    return response.data;
+  } catch (error) {
+    console.error(`[server] LeagueBuilds API error for ${championName}:`, error.message);
+    
+    if (error.response) {
+      throw new Error(`LeagueBuilds API error: ${error.response.status}`);
+    }
+    throw new Error(`LeagueBuilds API request failed: ${error.message}`);
+  }
+}
+
+/**
+ * Process LeagueBuilds response to our format
+ * Takes first 5 items + most popular boot as core 6
+ * @param {Object} lbData - Raw LeagueBuilds data
+ * @param {string} championName - Champion name
+ * @returns {Object} Processed build with core, sit, and role
+ */
+async function processLeagueBuildsResponse(lbData, championName) {
+  // Parse all items (already sorted by frequency)
+  const allItems = parsePythonList(lbData.item) || [];
+  
+  // Parse boots (sorted by frequency)
+  const boots = parsePythonList(lbData.boots) || [];
+  
+  // Parse item_build for reference
+  const itemBuild = parsePythonList(lbData.item_build) || [];
+  
+  // Get champion role/position
+  const role = lbData.position || 'Mid';
+  
+  // Ensure we have items
+  if (allItems.length < 5) {
+    console.error(`[server] LeagueBuilds: Only ${allItems.length} items for ${championName}`);
+    throw new Error('Insufficient items in LeagueBuilds response');
+  }
+  
+  // CORE 5: First 5 most frequent items
+  const coreItemIds = allItems.slice(0, 5);
+  
+  // Add most popular boot as 6th core item
+  if (boots.length > 0) {
+    coreItemIds.push(boots[0]);
+  } else {
+    // Fallback: try to find a boot in allItems
+    const bootIds = [3020, 3158, 3111, 3006, 3009, 3047]; // Sorcerer's, Ionian, Mercury's, Berserker's, Ninja, Plated
+    for (const bootId of bootIds) {
+      if (allItems.includes(bootId) && !coreItemIds.includes(bootId)) {
+        coreItemIds.push(bootId);
+        break;
+      }
+    }
+  }
+  
+  // Ensure we have exactly 6 core items
+  if (coreItemIds.length < 6) {
+    // Fill remaining slots from allItems
+    const remaining = allItems.filter(id => !coreItemIds.includes(id));
+    coreItemIds.push(...remaining.slice(0, 6 - coreItemIds.length));
+  }
+  
+  // SITUATIONAL: Next items from allItems (excluding core)
+  const coreSet = new Set(coreItemIds);
+  const sitItemIds = allItems.filter(id => !coreSet.has(id)).slice(0, 14);
+  
+  // Convert IDs to names using our cached item data
+  const coreNames = [];
+  const sitNames = [];
+  
+  for (const id of coreItemIds.slice(0, 6)) {
+    const name = await getItemName(id);
+    coreNames.push(name);
+  }
+  
+  for (const id of sitItemIds) {
+    const name = await getItemName(id);
+    sitNames.push(name);
+  }
+  
+  // Build result in our expected format
+  const result = {
+    ch: championName,
+    role: role || 'Mid',
+    builds: [{
+      core: coreNames.filter(Boolean),
+      sit: sitNames.filter(Boolean)
+    }],
+    source: {
+      primary: 'leaguebuilds',
+      timestamp: Date.now(),
+      via: 'leaguebuilds.hopto.org',
+      cached: false
+    }
+  };
+  
+  console.log(`[server] LeagueBuilds processed ${championName}: ${coreNames.length} core, ${sitNames.length} situational`);
+  
+  return result;
+}
+
+// ============================================
+// UNIFIED BUILD FETCHING
+// ============================================
+
+/**
+ * Fetch champion build from the configured source (Parse.bot or LeagueBuilds)
+ * @param {string} championName - Champion name
+ * @param {string} role - Champion role/position
+ * @returns {Promise<Object>} Build data in standard format
+ */
+async function fetchChampionBuild(championName, role = 'Mid') {
+  const normalizedName = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const normalizedRole = role.toLowerCase();
+  
+  // Get role from DEFAULT_ROLES if not provided
+  let championRole = role;
+  const normalizedKey = normalizedName;
+  if (DEFAULT_ROLES[normalizedKey]) {
+    championRole = DEFAULT_ROLES[normalizedKey];
+  }
+  
+  // Check cache first
+  const cachedBuild = getCachedBuild(championName);
+  if (cachedBuild) {
+    console.log(`[server] Cache hit for ${championName}`);
+    return cachedBuild;
+  }
+  
+  try {
+    let rawData, processedData;
+    
+    if (BUILD_SOURCE === 'leaguebuilds') {
+      // Use LeagueBuilds
+      console.log(`[server] Fetching ${championName} from LeagueBuilds`);
+      rawData = await fetchFromLeagueBuilds(championName, championRole);
+      processedData = await processLeagueBuildsResponse(rawData, championName);
+    } else {
+      // Use Parse.bot (default)
+      console.log(`[server] Fetching ${championName} from Parse.bot`);
+      rawData = await fetchFromParseBot(championName, championRole);
+      processedData = await processParseBotResponse(rawData, championName);
+    }
+    
+    // Cache the result
+    cacheBuild(championName, processedData);
+    
+    return processedData;
+  } catch (error) {
+    console.error(`[server] Failed to fetch build for ${championName}:`, error.message);
+    throw error;
+  }
+}
 
 // ============================================
 // ITEM DATA CACHING
@@ -541,72 +797,38 @@ app.get('/api/build/:champion', async (req, res) => {
       });
     }
     
+    // Get role from DEFAULT_ROLES
     const normalizedKey = normalizedName.toLowerCase().replace(/[^a-z0-9]/g, '');
     let role = DEFAULT_ROLES[normalizedKey] || 'Mid';
     
-    // Check cache first
-    const cachedBuild = getCachedBuild(normalizedName);
-    if (cachedBuild) {
-      console.log(`[server] Cache hit for ${normalizedName}`);
-      // Add cached flag to the response
-      const resultWithCacheFlag = JSON.parse(JSON.stringify(cachedBuild));
-      if (resultWithCacheFlag.source) {
-        resultWithCacheFlag.source.cached = true;
-      }
-      return res.json(resultWithCacheFlag);
-    }
-    
-    // Not in cache, fetch from Parse.bot
-    let parseData;
+    // Use unified fetch function that handles both sources
     try {
-      parseData = await fetchFromParseBot(normalizedName, role);
+      const result = await fetchChampionBuild(normalizedName, role);
+      
+      // Ensure we have valid data
+      if (!result.builds || !result.builds[0] || !result.builds[0].core || result.builds[0].core.length < 6) {
+        return res.status(404).json({ 
+          error: 'Insufficient core items found in build data',
+          fallback: 'hardcoded'
+        });
+      }
+      
+      // Add source info to response
+      const response = JSON.parse(JSON.stringify(result));
+      if (response.source) {
+        response.source.cached = false;
+      }
+      
+      return res.json(response);
+      
     } catch (e) {
-      console.error(`[server] Failed to fetch from Parse.bot for ${normalizedName}:`, e.message);
-      const userFriendlyError = getUserFriendlyError(e.message);
+      console.error(`[server] Failed to fetch build for ${normalizedName}:`, e.message);
+      const userFriendlyError = getUserFriendlyError(e.message || String(e));
       return res.status(500).json({ 
         error: userFriendlyError,
         fallback: 'hardcoded'
       });
     }
-    
-    // Process response
-    let build;
-    try {
-      build = await processParseBotResponse(parseData, normalizedName);
-      role = build.role || role;
-    } catch (e) {
-      console.error(`[server] Failed to process Parse.bot response for ${normalizedName}:`, e.message);
-      const userFriendlyError = getUserFriendlyError(e.message);
-      return res.status(500).json({ 
-        error: userFriendlyError,
-        fallback: 'hardcoded'
-      });
-    }
-    
-    if (!build.core || build.core.length < 6) {
-      return res.status(404).json({ 
-        error: 'Insufficient core items found in build data',
-        fallback: 'hardcoded'
-      });
-    }
-    
-    // Build result
-    const result = {
-      ch: normalizedName,
-      role: role,
-      builds: [{ core: build.core.slice(0, 6), sit: build.sit || [] }],
-      source: { 
-        primary: 'mobalytics-parse-api',
-        timestamp: Date.now(),
-        via: 'parse.bot',
-        cached: false
-      }
-    };
-    
-    // Cache the result
-    cacheBuild(normalizedName, result);
-    
-    res.json(result);
     
   } catch (e) {
     console.error(`[server] Error fetching build for ${req.params.champion}:`, e);

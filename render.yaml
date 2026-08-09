@@ -15,6 +15,10 @@ services:
         fromServiceEnv: true
       - key: ALLOWED_ORIGINS
         value: https://itemdle.onrender.com,https://geek838.github.io,http://localhost:8080
+      - key: BUILD_SOURCE
+        value: leaguebuilds
+      - key: LEAGUEBUILDS_URL
+        value: https://leaguebuilds.hopto.org
     autoDeploy: true
 
 # Note: For the frontend (Static Site), create a separate Static Site service
