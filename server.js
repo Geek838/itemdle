@@ -410,25 +410,112 @@ async function fetchFromParseBot(championName, role = 'mid') {
   }
 }
 
+// ============================================
+// ROLE DETECTION (via get_champion_stats)
+// ============================================
+
+// Cache: championKey -> { role, timestamp }. Roles rarely change, so reuse
+// for the lifetime of the build cache (24h) to minimize Parse.bot credits.
+const roleCache = {};
+const ROLE_CACHE_TTL = parseInt(process.env.ROLE_CACHE_TTL || '86400000'); // 24h
+
+/**
+ * Fetch a champion's per-role stats from Parse.bot (get_champion_stats).
+ * Returns the raw response data, or null on failure.
+ */
+async function fetchChampionStats(championName) {
+  const normalizedName = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const url = `${PARSE_API_URL}/get_champion_stats?champion_slug=${normalizedName}`;
+
+  try {
+    apiCallCount++;
+    console.log(`[server] Parse.bot stats API call #${apiCallCount} for ${championName}`);
+
+    const response = await axios.get(url, {
+      headers: {
+        'X-API-Key': PARSE_API_KEY,
+        'Accept': 'application/json'
+      },
+      timeout: 30000
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error(`[server] Parse.bot stats API error for ${championName}:`, error.message);
+    return null;
+  }
+}
+
+/**
+ * Detect a champion's most popular role by querying get_champion_stats and
+ * picking the role with the highest pick rate. Falls back to DEFAULT_ROLES,
+ * then 'Mid'. The Parse.bot get_champion_build endpoint treats role as an
+ * INPUT only (it never echoes a role back), so we must determine it here.
+ *
+ * @param {string} championName - Display name (e.g. 'Lillia')
+ * @returns {Promise<string>} Role ('Mid','Top','Jungle','ADC','Support')
+ */
+async function detectRole(championName) {
+  const normalizedKey = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // 1. Cached?
+  const cached = roleCache[normalizedKey];
+  if (cached && Date.now() - cached.timestamp < ROLE_CACHE_TTL) {
+    return cached.role;
+  }
+
+  // 2. Hardcoded override (fast path; also covers champions stats may omit)
+  let role = DEFAULT_ROLES[normalizedKey] || null;
+
+  // 3. Query stats for the most popular role
+  if (!role) {
+    const statsData = await fetchChampionStats(championName);
+    const roles = statsData?.data?.roles;
+
+    if (Array.isArray(roles) && roles.length > 0) {
+      // Pick the role entry with the highest pick_rate (parse "%" strings)
+      let best = null;
+      let bestPick = -1;
+      for (const r of roles) {
+        if (!r || !r.role) continue;
+        const mapped = ROLE_MAP[String(r.role).toUpperCase()];
+        if (!mapped) continue;
+        const pick = parseFloat(r.pick_rate) || 0;
+        if (pick > bestPick) {
+          bestPick = pick;
+          best = mapped;
+        }
+      }
+      if (best) {
+        role = best;
+        console.log(`[server] Detected role for ${championName}: ${role} (pick_rate ${bestPick}%)`);
+      }
+    }
+  }
+
+  // 4. Final fallback
+  if (!role) {
+    role = 'Mid';
+    console.warn(`[server] Could not detect role for ${championName}, defaulting to ${role}`);
+  }
+
+  roleCache[normalizedKey] = { role, timestamp: Date.now() };
+  return role;
+}
+
 // Process Parse.bot response to our format
-async function processParseBotResponse(parseData, championName) {
+// `detectedRole` is the role we queried get_champion_build with; the API does
+// not return a role field, so we trust our own detection rather than the response.
+async function processParseBotResponse(parseData, championName, detectedRole) {
   const buildData = parseData.data?.build;
   
   if (!buildData) {
     throw new Error('No build data in Parse.bot response');
   }
   
-  // Get role - prioritize API response, then fallback to defaults
-  let role = 'Mid';
-  if (parseData.data?.role) {
-    role = ROLE_MAP[parseData.data.role.toUpperCase()] || parseData.data.role;
-  } else {
-    // Fallback to DEFAULT_ROLES if API doesn't provide role
-    const normalizedKey = championName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (DEFAULT_ROLES[normalizedKey]) {
-      role = DEFAULT_ROLES[normalizedKey];
-    }
-  }
+  // Role: use the role we detected and queried the build for. The Parse.bot
+  // get_champion_build response does not include a role field.
+  const role = detectedRole || 'Mid';
   
   // Extract items from the build
   const items = buildData.items || {};
@@ -541,8 +628,9 @@ app.get('/api/build/:champion', async (req, res) => {
       });
     }
     
-    const normalizedKey = normalizedName.toLowerCase().replace(/[^a-z0-9]/g, '');
-    let role = DEFAULT_ROLES[normalizedKey] || 'Mid';
+    // Detect the champion's most popular role (cached) BEFORE fetching the
+    // build, because get_champion_build takes role as an input parameter.
+    const role = await detectRole(normalizedName);
     
     // Check cache first
     const cachedBuild = getCachedBuild(normalizedName);
@@ -556,7 +644,7 @@ app.get('/api/build/:champion', async (req, res) => {
       return res.json(resultWithCacheFlag);
     }
     
-    // Not in cache, fetch from Parse.bot
+    // Not in cache, fetch from Parse.bot for the detected role
     let parseData;
     try {
       parseData = await fetchFromParseBot(normalizedName, role);
@@ -569,11 +657,10 @@ app.get('/api/build/:champion', async (req, res) => {
       });
     }
     
-    // Process response
+    // Process response (role is already known; build.role mirrors it)
     let build;
     try {
-      build = await processParseBotResponse(parseData, normalizedName);
-      role = build.role || role;
+      build = await processParseBotResponse(parseData, normalizedName, role);
     } catch (e) {
       console.error(`[server] Failed to process Parse.bot response for ${normalizedName}:`, e.message);
       const userFriendlyError = getUserFriendlyError(e.message);
@@ -590,10 +677,10 @@ app.get('/api/build/:champion', async (req, res) => {
       });
     }
     
-    // Build result
+    // Build result (role was detected before the fetch)
     const result = {
       ch: normalizedName,
-      role: role,
+      role: build.role || role,
       builds: [{ core: build.core.slice(0, 6), sit: build.sit || [] }],
       source: { 
         primary: 'mobalytics-parse-api',
