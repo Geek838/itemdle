@@ -19,7 +19,7 @@ ITEMDLE now features a **dynamic build curation system** that fetches the latest
 
 - ✅ **Always up-to-date**: Builds reflect the current meta for each patch
 - ✅ **Supports all champions**: Not limited to the 25 hardcoded champions
-- ✅ **Automatic role detection**: Uses the most popular role for each champion
+- ✅ **Automatic role detection**: Detects each champion's most popular role via `get_champion_stats` (highest pick rate)
 - ✅ **Single source**: Uses mobalytics.gg data via Parse.bot
 - ✅ **No Cloudflare issues**: Parse.bot handles all scraping and bypass
 - ✅ **Server-side caching**: Builds cached for 24h, minimizing API usage (~30/month)
@@ -43,9 +43,14 @@ We use the [Parse.bot Mobalytics API](https://parse.bot/marketplace/53405028-f65
 The `get_champion_build` endpoint returns:
 - `items.core_items` - Core items (by ID)
 - `items.situational_items` - Situational items (by ID)
-- `role` - Champion role
 - `tier` - Champion tier
 - `stats` - Win rate, pick rate, ban rate
+
+> **Note:** `get_champion_build` does **not** return a `role` field — `role` is an
+> *input* parameter. To determine the most popular role for each champion, the
+> backend additionally calls `get_champion_stats` and selects the role with the
+> highest pick rate (cached for 24h). The detected role is then passed back into
+> `get_champion_build` so the build reflects the champion's actual position.
 
 We map item IDs to names using Data Dragon's item.json.
 
@@ -146,7 +151,7 @@ xdg-open index.html
 
 The backend server will run on `http://localhost:3000` and automatically handle:
 - Fetching builds from Parse.bot API (which connects to mobalytics.gg)
-- Detecting champion roles with DEFAULT_ROLES fallback
+- Detecting champion roles via `get_champion_stats` (highest pick rate), with DEFAULT_ROLES fallback
 - CORS headers for local development
 
 ### Quick Start (Offline/Hardcoded Mode)
