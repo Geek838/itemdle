@@ -1,7 +1,10 @@
 /**
  * server.js - Backend proxy for ITEMDLE dynamic build fetching
  * 
- * Fetches builds from Mobalytics via Parse.bot API OR LeagueBuilds with server-side caching
+ * Fetches builds from:
+ * 1. Riot Games API (recent matches across regions) - NEW
+ * 2. Mobalytics via Parse.bot API
+ * 3. LeagueBuilds API
  * 
  * USAGE:
  * 1. Install Node.js (v16+)
@@ -11,26 +14,30 @@
  * 5. The server runs on http://localhost:3000
  * 
  * ENDPOINTS:
- * - GET /api/build/:champion - Get build for champion (Mobalytics via Parse.bot OR LeagueBuilds)
+ * - GET /api/build/:champion - Get build for champion (Riot API, Parse.bot, or LeagueBuilds)
  * - GET /api/builds - Get all cached builds
  * - GET /api/health - Health check
  * 
  * DEPLOYMENT:
  * - Deploy to Heroku, Render, Railway, or any Node.js hosting
- * - Set PORT and PARSE_API_KEY (for Parse.bot) or use LeagueBuilds (no key needed)
+ * - Set PORT and BUILD_SOURCE
+ * - For Riot API: Set RIOT_API_KEY from https://developer.riotgames.com/
+ * - For Parse.bot: Set PARSE_API_KEY
+ * - For LeagueBuilds: No key needed
  * - Configure CORS origins as needed
- * - Note: Server caches builds for 24h to minimize API usage
+ * - Note: Server caches builds to minimize API usage
  * 
  * API SOURCES:
- * - Parse.bot Mobalytics API: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api
- * - LeagueBuilds API: https://leaguebuilds.hopto.org (Free, no API key, sorted by frequency)
+ * - Riot Games API: https://developer.riotgames.com/ (Official, rate-limited)
+ * - Parse.bot Mobalytics API: https://parse.bot/marketplace/.../mobalytics-gg-api
+ * - LeagueBuilds API: https://leaguebuilds.hopto.org (Free, no API key)
  * - Item names from Data Dragon (Riot Games)
  * 
  * CACHING:
- * - Builds cached in memory for 24 hours
+ * - Builds cached in memory + disk for persistence
+ * - Riot API cache: 1 hour (to get fresh match data)
+ * - Parse.bot/LeagueBuilds cache: 24 hours
  * - Item data cached for 1 hour
- * - Parse.bot: ~30 API calls/month (free tier)
- * - LeagueBuilds: 60-120 requests/minute (free)
  */
 
 const express = require('express');
@@ -49,24 +56,36 @@ const app = express();
 
 const PORT = process.env.PORT || 3000;
 const PARSE_API_KEY = process.env.PARSE_API_KEY;
+const RIOT_API_KEY = process.env.RIOT_API_KEY;
 
-// Only require PARSE_API_KEY if using Parse.bot as the source
-const BUILD_SOURCE = process.env.BUILD_SOURCE || (PARSE_API_KEY ? 'parsebot' : 'leaguebuilds');
+// Determine build source priority
+// Priority order: riot_api > parsebot > leaguebuilds
+const BUILD_SOURCE = process.env.BUILD_SOURCE || (RIOT_API_KEY ? 'riot_api' : (PARSE_API_KEY ? 'parsebot' : 'leaguebuilds'));
 
+// Validate API key requirements based on build source
 if (BUILD_SOURCE === 'parsebot' && !PARSE_API_KEY) {
   console.error('[server] PARSE_API_KEY environment variable is required for Parse.bot');
   console.error('[server] Get your API key from: https://parse.bot/marketplace/53405028-f65e-4c87-a55f-80a5b57efc50/mobalytics-gg-api');
   console.error('[server] OR set BUILD_SOURCE=leaguebuilds to use LeagueBuilds (no API key needed)');
   process.exit(1);
 }
+
+if (BUILD_SOURCE === 'riot_api' && !RIOT_API_KEY) {
+  console.warn('[server] RIOT_API_KEY not set, falling back to leaguebuilds');
+  // Auto-fallback to leaguebuilds if Riot API key is missing
+  BUILD_SOURCE = 'leaguebuilds';
+}
+
 const PARSE_API_URL = process.env.PARSE_API_URL || 'https://api.parse.bot/scraper/e7dd7967-737e-472d-90c0-f106c9882b4e';
 const DD_API_URL = process.env.DD_API_URL || 'https://ddragon.leagueoflegends.com';
 
 // ============================================
 // API SOURCE CONFIGURATION
 // ============================================
-// Set BUILD_SOURCE to 'parsebot' (default) or 'leaguebuilds'
-// If PARSE_API_KEY is not set, automatically falls back to leaguebuilds
+// BUILD_SOURCE can be: 'riot_api', 'parsebot', or 'leaguebuilds'
+// - riot_api: Uses official Riot Games API (requires RIOT_API_KEY)
+// - parsebot: Uses Parse.bot Mobalytics API (requires PARSE_API_KEY)  
+// - leaguebuilds: Uses LeagueBuilds API (free, no key needed)
 const LEAGUEBUILDS_URL = process.env.LEAGUEBUILDS_URL || 'https://leaguebuilds.hopto.org';
 
 console.log(`[server] Using build source: ${BUILD_SOURCE}`);
@@ -491,7 +510,7 @@ async function processLeagueBuildsResponse(lbData, championName) {
 // ============================================
 
 /**
- * Fetch champion build from the configured source (Parse.bot or LeagueBuilds)
+ * Fetch champion build from the configured source (Riot API, Parse.bot, or LeagueBuilds)
  * @param {string} championName - Champion name
  * @param {string} role - Champion role/position
  * @returns {Promise<Object>} Build data in standard format
@@ -517,13 +536,43 @@ async function fetchChampionBuild(championName, role = 'Mid') {
   try {
     let rawData, processedData;
     
-    if (BUILD_SOURCE === 'leaguebuilds') {
+    if (BUILD_SOURCE === 'riot_api') {
+      // Use Riot Games API - fetch builds from recent matches across regions
+      console.log(`[server] Fetching ${championName} from Riot API`);
+      const riotFetcher = require('./js/riotApiFetcher');
+      
+      // Use the Riot API fetcher with multi-region support
+      const result = await riotFetcher.fetchBuildFromRiotAPI(
+        championName,
+        (process.env.RIOT_REGIONS || 'na1,euw1,kr').split(','),
+        parseInt(process.env.RIOT_MATCHES_PER_REGION || '20')
+      );
+      
+      if (!result) {
+        throw new Error('No build data from Riot API');
+      }
+      
+      // Convert to our standard format
+      processedData = {
+        ch: championName,
+        role: result.role,
+        builds: result.builds,
+        source: {
+          primary: 'riot_api',
+          games: result.source?.games || 0,
+          winRate: result.source?.winRate || 0,
+          regions: result.source?.regions || [],
+          timestamp: Date.now(),
+          cached: false
+        }
+      };
+    } else if (BUILD_SOURCE === 'leaguebuilds') {
       // Use LeagueBuilds
       console.log(`[server] Fetching ${championName} from LeagueBuilds`);
       rawData = await fetchFromLeagueBuilds(championName, championRole);
       processedData = await processLeagueBuildsResponse(rawData, championName);
     } else {
-      // Use Parse.bot (default)
+      // Use Parse.bot (default fallback)
       console.log(`[server] Fetching ${championName} from Parse.bot`);
       rawData = await fetchFromParseBot(championName, championRole);
       processedData = await processParseBotResponse(rawData, championName);
